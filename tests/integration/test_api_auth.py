@@ -1,7 +1,12 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.api.middleware.auth_token import APITokenMiddleware
+from backend.api.auth import build_auth_router
+from backend.core.config import Settings
+from backend.services.security_service import SecurityService
 
 
 def make_app(token: str) -> FastAPI:
@@ -46,3 +51,44 @@ def test_secret_rejects_wrong_token():
     client = TestClient(app)
     r = client.get("/secret", headers={"X-PB-Token": "wrong"})
     assert r.status_code == 401
+
+
+def test_initialize_then_unlock(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    settings = Settings()
+    settings.ensure_dirs()
+    security = SecurityService(settings)
+
+    app = FastAPI()
+    app.include_router(build_auth_router(security))
+    client = TestClient(app)
+
+    # Initialize
+    r = client.post("/api/auth/initialize", json={"password": "InitPass!1234"})
+    assert r.status_code == 201
+
+    # Re-initialize should fail
+    r = client.post("/api/auth/initialize", json={"password": "anythingLong12"})
+    assert r.status_code == 409
+
+    # Unlock with wrong password
+    r = client.post("/api/auth/unlock", json={"password": "wrongpassword12"})
+    assert r.status_code == 401
+
+    # Unlock with correct password
+    r = client.post("/api/auth/unlock", json={"password": "InitPass!1234"})
+    assert r.status_code == 200
+
+
+def test_unlock_before_initialize(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    settings = Settings()
+    settings.ensure_dirs()
+    security = SecurityService(settings)
+
+    app = FastAPI()
+    app.include_router(build_auth_router(security))
+    client = TestClient(app)
+
+    r = client.post("/api/auth/unlock", json={"password": "anylongpassword12"})
+    assert r.status_code == 412   # precondition failed: not initialized
