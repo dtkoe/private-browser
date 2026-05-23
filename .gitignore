@@ -1,0 +1,49 @@
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+
+# Project data (encrypted DB and profile dirs)
+*.db
+*.db-shm
+*.db-wal
+profiles/
+camoufox/
+logs/
+backups/
+temp/
+logs_test/
+
+# Secrets
+.env
+.env.*
+
+# Superpowers brainstorm transcripts
+.superpowers/
+
+# PyInstaller / NSIS outputs
+*.spec
+installer/output/
