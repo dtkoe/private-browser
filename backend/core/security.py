@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import hmac
 import secrets
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from hashlib import sha256
 from typing import Any
 
-from argon2.low_level import hash_secret_raw, Type as Argon2Type
+from argon2.low_level import Type as Argon2Type
+from argon2.low_level import hash_secret_raw
 
 
 @dataclass(frozen=True)
@@ -19,14 +20,14 @@ class KDFParams:
     type: str = "argon2id"
 
     @classmethod
-    def default(cls) -> "KDFParams":
+    def default(cls) -> KDFParams:
         return cls()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "KDFParams":
+    def from_dict(cls, d: dict[str, Any]) -> KDFParams:
         return cls(**d)
 
 

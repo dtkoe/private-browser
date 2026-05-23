@@ -1,4 +1,3 @@
-from pathlib import Path
 from backend.core.config import Settings
 
 

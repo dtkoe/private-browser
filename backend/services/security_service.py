@@ -6,11 +6,11 @@ import os
 import secrets
 from pathlib import Path
 
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from alembic import command
 from backend.core.config import Settings
 from backend.core.db import (
     DatabaseUnlockError,

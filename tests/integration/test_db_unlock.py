@@ -4,9 +4,9 @@ from pathlib import Path
 import pytest
 
 from backend.core.db import (
+    DatabaseUnlockError,
     create_new_encrypted_db,
     open_encrypted_db,
-    DatabaseUnlockError,
 )
 from backend.core.security import derive_key
 

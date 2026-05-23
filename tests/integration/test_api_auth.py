@@ -3,8 +3,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend.api.middleware.auth_token import APITokenMiddleware
 from backend.api.auth import build_auth_router
+from backend.api.middleware.auth_token import APITokenMiddleware
 from backend.core.config import Settings
 from backend.services.security_service import SecurityService
 

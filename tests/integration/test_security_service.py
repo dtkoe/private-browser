@@ -4,10 +4,10 @@ import pytest
 
 from backend.core.config import Settings
 from backend.services.security_service import (
-    SecurityService,
     AlreadyInitialized,
     InvalidPassword,
     NotInitialized,
+    SecurityService,
 )
 
 

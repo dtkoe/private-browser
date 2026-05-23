@@ -3,11 +3,11 @@ import secrets
 import pytest
 
 from backend.core.security import (
-    derive_key,
-    make_verifier,
-    check_verifier,
     KDFParams,
+    check_verifier,
+    derive_key,
     generate_api_token,
+    make_verifier,
 )
 
 

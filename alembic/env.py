@@ -6,13 +6,12 @@ from logging.config import fileConfig
 from pathlib import Path
 
 import sqlcipher3
-from alembic import context
 from sqlalchemy import create_engine, event, pool
 
+from alembic import context
 from backend.models import Base
 from backend.models.app_settings import AppSettings  # noqa: F401 — force import for metadata
 from backend.models.audit_log import AuditLog  # noqa: F401 — force import for metadata
-
 
 config = context.config
 
