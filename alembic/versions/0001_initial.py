@@ -28,7 +28,20 @@ def upgrade() -> None:
         sa.Column("kdf_params_json", sa.String(), nullable=False),
         sa.CheckConstraint("id = 1", name="ck_app_settings_singleton"),
     )
+    op.create_table(
+        "audit_log",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("ts", sa.BigInteger(), nullable=False),
+        sa.Column("actor", sa.String(), nullable=False),
+        sa.Column("action", sa.String(), nullable=False),
+        sa.Column("target_type", sa.String(), nullable=True),
+        sa.Column("target_id", sa.String(), nullable=True),
+        sa.Column("details", sa.String(), nullable=True),
+    )
+    op.create_index("idx_audit_ts", "audit_log", ["ts"])
 
 
 def downgrade() -> None:
+    op.drop_index("idx_audit_ts", table_name="audit_log")
+    op.drop_table("audit_log")
     op.drop_table("app_settings")
