@@ -27,6 +27,14 @@ def _new_seed() -> int:
     return secrets.randbits(64)
 
 
+def _emit(event: dict) -> None:
+    try:
+        from backend.services.event_bus import bus
+        bus.publish(event)
+    except Exception:
+        pass
+
+
 class ProfileService:
     def __init__(
         self,
@@ -70,6 +78,7 @@ class ProfileService:
             s.commit()
             s.refresh(row)
             s.expunge(row)
+        _emit({"event": "profile_created", "profile_id": pid})
         return row
 
     def list_profiles(self) -> list[Profile]:
@@ -112,6 +121,7 @@ class ProfileService:
             s.commit()
             s.refresh(row)
             s.expunge(row)
+        _emit({"event": "profile_updated", "profile_id": profile_id})
         return row
 
     def regenerate_fingerprint(
@@ -129,6 +139,7 @@ class ProfileService:
             s.commit()
             s.refresh(row)
             s.expunge(row)
+        _emit({"event": "profile_updated", "profile_id": profile_id})
         return row
 
     def set_proxy(self, profile_id: str, proxy_id: str | None) -> Profile:
@@ -141,6 +152,7 @@ class ProfileService:
             s.commit()
             s.refresh(row)
             s.expunge(row)
+        _emit({"event": "profile_updated", "profile_id": profile_id})
         return row
 
     def update_status(
@@ -162,16 +174,11 @@ class ProfileService:
             s.commit()
             s.refresh(row)
             s.expunge(row)
-        # Emit event for live UI updates (non-async; safe to swallow if bus has no loop attached)
-        try:
-            from backend.services.event_bus import bus
-            bus.publish({
-                "event": "profile_status_changed",
-                "profile_id": profile_id,
-                "status": status_value,
-            })
-        except Exception:
-            pass
+        _emit({
+            "event": "profile_status_changed",
+            "profile_id": profile_id,
+            "status": status_value,
+        })
         return row
 
     def clone(
@@ -217,6 +224,7 @@ class ProfileService:
             s.commit()
             s.refresh(clone)
             s.expunge(clone)
+        _emit({"event": "profile_created", "profile_id": new_id})
         return clone
 
     def bulk_delete(self, profile_ids: list[str]) -> list[str]:
@@ -239,6 +247,7 @@ class ProfileService:
             s.commit()
         if udd.exists():
             shutil.rmtree(udd, ignore_errors=True)
+        _emit({"event": "profile_deleted", "profile_id": profile_id})
 
 
 def _now_ms() -> int:

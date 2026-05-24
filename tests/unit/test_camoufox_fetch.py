@@ -4,8 +4,6 @@ from __future__ import annotations
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from shell.camoufox_fetch import camoufox_binary_path, is_camoufox_installed

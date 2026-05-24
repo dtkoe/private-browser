@@ -42,7 +42,14 @@ export default function Page() {
   useEffect(() => {
     if (!unlocked) return;
     return subscribeEvents((e) => {
-      if (e.event === "profile_status_changed") refreshProfiles();
+      if (
+        e.event === "profile_status_changed" ||
+        e.event === "profile_created" ||
+        e.event === "profile_updated" ||
+        e.event === "profile_deleted"
+      ) {
+        refreshProfiles();
+      }
     });
   }, [unlocked]);
 
@@ -55,7 +62,7 @@ export default function Page() {
       <header className="flex items-center justify-between border-b border-bg-border bg-bg-elevated px-4 py-2">
         <div className="flex items-center gap-2">
           <span className="font-semibold">Private Browser</span>
-          <span className="text-xs text-muted">v0.6.0</span>
+          <span className="text-xs text-muted">v0.7.0</span>
         </div>
         <nav className="flex gap-1">
           <TabBtn current={tab} value="profiles" onClick={() => setTab("profiles")}>

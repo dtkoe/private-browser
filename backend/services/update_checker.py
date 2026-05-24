@@ -19,7 +19,7 @@ def _version_tuple(v: str) -> tuple:
 
 
 class UpdateChecker:
-    def __init__(self, repo: str = "dtkoe/private-browser", current_version: str = "0.6.0"):
+    def __init__(self, repo: str = "dtkoe/private-browser", current_version: str = "0.7.0"):
         self._repo = repo
         self._current = current_version
 

@@ -163,7 +163,19 @@ export function ProxyPanel() {
         <tbody>
           {proxies.map((p) => (
             <tr key={p.id} className="border-t border-bg-border/50">
-              <td className="px-3 py-2 text-sm">{p.label}</td>
+              <td className="px-3 py-2 text-sm">
+                <EditableLabel
+                  value={p.label}
+                  onSave={async (v) => {
+                    try {
+                      await api.updateProxy(p.id, { label: v });
+                      refresh();
+                    } catch (e: any) {
+                      setErr(e?.detail ?? String(e));
+                    }
+                  }}
+                />
+              </td>
               <td className="px-3 py-2 text-xs text-muted">
                 {p.type}://{p.host}:{p.port}
               </td>
@@ -207,5 +219,45 @@ export function ProxyPanel() {
         </tbody>
       </table>
     </section>
+  );
+}
+
+
+function EditableLabel({ value, onSave }: { value: string; onSave: (v: string) => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  if (!editing) {
+    return (
+      <button
+        onClick={() => {
+          setDraft(value);
+          setEditing(true);
+        }}
+        className="rounded px-1 text-left hover:bg-bg-border/40"
+        title="Click to rename"
+      >
+        {value}
+      </button>
+    );
+  }
+  return (
+    <input
+      autoFocus
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={async () => {
+        setEditing(false);
+        if (draft.trim() && draft.trim() !== value) await onSave(draft.trim());
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        else if (e.key === "Escape") {
+          setDraft(value);
+          setEditing(false);
+        }
+      }}
+      className="w-full rounded border border-accent bg-bg px-1 py-0.5 text-sm outline-none"
+    />
   );
 }

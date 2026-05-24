@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from backend.services.update_checker import UpdateChecker
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 
 def build_system_router() -> APIRouter:

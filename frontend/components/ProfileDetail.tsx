@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
 import type { Profile, Proxy } from "@/lib/types";
@@ -10,13 +10,25 @@ interface Props {
   onDeleted: () => void;
 }
 
+const COLOR_SWATCHES = ["#5b9eff", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#06b6d4", "#94a3b8", null];
+
 export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
   const [proxies, setProxies] = useState<Proxy[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [notesDraft, setNotesDraft] = useState("");
+  const [tagsDraft, setTagsDraft] = useState("");
+  const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     api.listProxies().then(setProxies).catch(() => {});
+    setEditingName(false);
+    setNameDraft(profile?.name ?? "");
+    setNotesDraft(profile?.notes ?? "");
+    setTagsDraft((profile?.tags ?? []).join(", "));
+    setErr(null);
   }, [profile?.id]);
 
   if (!profile) {
@@ -69,11 +81,78 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
 
   const fp = profile.fingerprint || {};
 
+  async function commitName() {
+    const trimmed = nameDraft.trim();
+    if (!trimmed || trimmed === profile?.name) {
+      setEditingName(false);
+      return;
+    }
+    setEditingName(false);
+    await action(() => api.updateProfile(profile!.id, { name: trimmed }));
+  }
+
+  async function commitNotes(value: string) {
+    if (!profile) return;
+    if (value === (profile.notes ?? "")) return;
+    await action(() => api.updateProfile(profile.id, { notes: value }));
+  }
+
+  function scheduleNotesCommit(value: string) {
+    setNotesDraft(value);
+    if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
+    notesTimerRef.current = setTimeout(() => commitNotes(value), 600);
+  }
+
+  async function commitTags() {
+    if (!profile) return;
+    const parsed = tagsDraft
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const current = profile.tags ?? [];
+    if (parsed.length === current.length && parsed.every((t, i) => t === current[i])) {
+      return;
+    }
+    await action(() => api.updateProfile(profile.id, { tags: parsed }));
+  }
+
+  async function commitColor(c: string | null) {
+    if (!profile) return;
+    if (c === (profile.color ?? null)) return;
+    await action(() => api.updateProfile(profile.id, { color: c }));
+  }
+
   return (
     <section className="flex-1 overflow-y-auto p-6">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">{profile.name}</h2>
+      <div className="mb-6 flex items-center justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          {editingName ? (
+            <input
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitName();
+                else if (e.key === "Escape") { setNameDraft(profile.name); setEditingName(false); }
+              }}
+              className="w-full rounded border border-accent bg-bg px-2 py-1 text-xl font-semibold outline-none"
+            />
+          ) : (
+            <h2
+              className="cursor-text truncate text-xl font-semibold hover:underline"
+              onClick={() => { setNameDraft(profile.name); setEditingName(true); }}
+              title="Click to rename"
+            >
+              {profile.color && (
+                <span
+                  className="mr-2 inline-block h-3 w-3 rounded-full align-middle"
+                  style={{ backgroundColor: profile.color }}
+                />
+              )}
+              {profile.name}
+            </h2>
+          )}
           <p className="text-xs text-muted">
             {profile.status} · OS: {fp._os ?? "?"} · UA: {(fp["navigator.userAgent"] ?? "").slice(0, 60)}…
           </p>
@@ -132,6 +211,47 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
       </div>
 
       {err && <div className="mb-4 rounded bg-red-900/40 px-3 py-2 text-sm text-red-300">{err}</div>}
+
+      <div className="mb-6 grid grid-cols-2 gap-4">
+        <div className="rounded border border-bg-border bg-bg-elevated p-4">
+          <div className="mb-2 text-xs uppercase text-muted">Notes</div>
+          <textarea
+            value={notesDraft}
+            onChange={(e) => scheduleNotesCommit(e.target.value)}
+            onBlur={() => commitNotes(notesDraft)}
+            placeholder="Anything to remember about this profile…"
+            rows={3}
+            className="w-full rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
+          />
+        </div>
+        <div className="rounded border border-bg-border bg-bg-elevated p-4">
+          <div className="mb-2 text-xs uppercase text-muted">Tags (comma-separated)</div>
+          <input
+            value={tagsDraft}
+            onChange={(e) => setTagsDraft(e.target.value)}
+            onBlur={commitTags}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            placeholder="work, ads, dev"
+            className="mb-3 w-full rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
+          />
+          <div className="mb-1 text-xs uppercase text-muted">Color</div>
+          <div className="flex flex-wrap gap-1">
+            {COLOR_SWATCHES.map((c, i) => (
+              <button
+                key={i}
+                onClick={() => commitColor(c)}
+                title={c ?? "none"}
+                className={`h-6 w-6 rounded-full border ${
+                  (profile.color ?? null) === c ? "border-white" : "border-bg-border"
+                }`}
+                style={{ backgroundColor: c ?? "transparent" }}
+              >
+                {c === null ? <span className="text-xs text-muted">×</span> : null}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
       <div className="mb-6 rounded border border-bg-border bg-bg-elevated p-4">
         <div className="mb-2 text-xs uppercase text-muted">Proxy</div>
