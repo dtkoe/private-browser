@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.7.0-m9] — 2026-05-24
+
+### Added
+
+**M7 UI wire-up (export/import/clone/extensions):**
+- ProfileDetail: Clone + Export buttons; embedded ExtensionsBlock (list / .xpi upload / remove)
+- Header: Import button (file picker → POST /api/import)
+- frontend/lib/api.ts: exportProfile/importProfile/cloneProfile/bulkDeleteProfiles + listExtensions/installExtension/removeExtension + systemInfo/checkUpdates
+
+**M8 bulk select + filter + token resilience:**
+- Sidebar: per-row checkbox; "N selected" toolbar with Delete + Clear; filter input
+- Token priority: URL ?t= wins over sessionStorage so backend restarts (= new token) work without forcing the user to clear browser storage
+
+**M9 WebSocket /ws + live status:**
+- backend/services/event_bus.py: thread-safe in-process pub/sub. Sync producers push events; async consumers read via per-connection asyncio.Queue. `attach_loop` makes `call_soon_threadsafe` available.
+- backend/api/websocket.py: /ws?t=<token> endpoint. Validates, accepts, forwards bus events as JSON.
+- ProfileService.update_status now publishes `profile_status_changed` event after commit.
+- frontend/lib/ws.ts: subscribeEvents with auto-reconnect (exponential backoff, max 12.8s).
+- frontend/app/page.tsx: subscribes on unlock, refreshes profile list on every `profile_status_changed` so the running/ready badge updates live.
+
+**Real-Camoufox ground truth tests (now in repo):**
+- tests/integration/test_fingerprint_applied.py: launches headless Camoufox per OS, reads navigator.userAgent/platform/oscpu/hardwareConcurrency + screen.width/height via page.evaluate, asserts identity with what FingerprintGenerator emitted. Windows + macOS + Linux all PASSED.
+- tests/integration/test_fingerprint_uniqueness.py: two Windows profiles → distinct canvas hashes AND distinct WebGL renderer (verified Intel HD Graphics vs NVIDIA GTX 980).
+
+**PyInstaller bundle works end-to-end:**
+- build/build_app.py + build/private_browser.spec committed (was gitignored before)
+- shell/run_app.py: dual-mode dev (subprocess) vs frozen (in-process uvicorn + StaticFiles mount on same port). In frozen mode no subprocess because `sys.executable` is the bundled exe.
+- shell/camoufox_fetch.py: frozen mode calls CamoufoxFetcher().install() directly. Path-detection bug fixed: binary lives at `%LOCALAPPDATA%\camoufox\camoufox\Cache\camoufox.exe`, not `%LOCALAPPDATA%\camoufox\camoufox.exe`.
+
+**Backend/UI plumbing:**
+- backend/api/middleware/auth_token.py: OPTIONS preflight passes through (no token check) so cross-origin from frontend works
+- backend/main.py: CORSMiddleware for http://127.0.0.1:8770 + localhost:8770
+
+### Tests
+- 148 passed (`pytest -m "not slow"`)
+- 3 PASSED in slow mode (real Camoufox per OS)
+- 1 PASSED in slow mode (real canvas/WebGL uniqueness)
+- ruff: clean
+
+### Known remaining gaps (see memory/project_gaps_post_v0_6.md)
+- No CreepJS/BrowserLeaks live verification (manual only)
+- No profile inline edit UI (notes/tags/color)
+- No proxy edit UI
+- No activity log viewer
+- Toast notifications still use native alert/confirm
+- Auto-update notification UI not surfaced
+- i18n / command palette / hotkeys deferred
+
 ## [v0.6.0-m6] — 2026-05-24
 
 ### Added
