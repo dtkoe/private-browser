@@ -1,0 +1,118 @@
+"use client";
+import { useEffect, useState } from "react";
+
+import { LoginScreen } from "@/components/LoginScreen";
+import { ProfileDetail } from "@/components/ProfileDetail";
+import { ProxyPanel } from "@/components/ProxyPanel";
+import { SettingsPanel } from "@/components/SettingsPanel";
+import { Sidebar } from "@/components/Sidebar";
+import { api } from "@/lib/api";
+import type { Profile } from "@/lib/types";
+
+type Tab = "profiles" | "proxies" | "settings";
+
+export default function Page() {
+  const [unlocked, setUnlocked] = useState(false);
+  const [tab, setTab] = useState<Tab>("profiles");
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const h = await api.health();
+        setUnlocked(h.unlocked);
+      } catch {}
+    })();
+  }, []);
+
+  async function refreshProfiles() {
+    try {
+      const list = await api.listProfiles();
+      setProfiles(list);
+    } catch {}
+  }
+
+  useEffect(() => {
+    if (unlocked) refreshProfiles();
+  }, [unlocked]);
+
+  if (!unlocked) return <LoginScreen onUnlocked={() => setUnlocked(true)} />;
+
+  const selected = profiles.find((p) => p.id === selectedId) ?? null;
+
+  return (
+    <div className="flex h-screen flex-col">
+      <header className="flex items-center justify-between border-b border-bg-border bg-bg-elevated px-4 py-2">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold">Private Browser</span>
+          <span className="text-xs text-muted">v0.4.0</span>
+        </div>
+        <nav className="flex gap-1">
+          <TabBtn current={tab} value="profiles" onClick={() => setTab("profiles")}>
+            Profiles
+          </TabBtn>
+          <TabBtn current={tab} value="proxies" onClick={() => setTab("proxies")}>
+            Proxies
+          </TabBtn>
+          <TabBtn current={tab} value="settings" onClick={() => setTab("settings")}>
+            Settings
+          </TabBtn>
+        </nav>
+        <button
+          className="rounded border border-bg-border px-2 py-1 text-xs text-muted hover:text-white"
+          onClick={async () => {
+            await api.lock();
+            setUnlocked(false);
+          }}
+        >
+          Lock
+        </button>
+      </header>
+      <main className="flex flex-1 overflow-hidden">
+        {tab === "profiles" && (
+          <>
+            <Sidebar
+              profiles={profiles}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onCreated={refreshProfiles}
+            />
+            <ProfileDetail
+              profile={selected}
+              onChanged={refreshProfiles}
+              onDeleted={() => {
+                setSelectedId(null);
+                refreshProfiles();
+              }}
+            />
+          </>
+        )}
+        {tab === "proxies" && <ProxyPanel />}
+        {tab === "settings" && <SettingsPanel />}
+      </main>
+    </div>
+  );
+}
+
+function TabBtn({
+  current,
+  value,
+  onClick,
+  children,
+}: {
+  current: string;
+  value: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const active = current === value;
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded px-3 py-1 text-sm ${active ? "bg-accent text-white" : "text-muted hover:text-white"}`}
+    >
+      {children}
+    </button>
+  );
+}

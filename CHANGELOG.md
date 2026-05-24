@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.4.0-m4] — 2026-05-24
+
+### Added
+
+**UI (Next.js 14) + pywebview shell (M4):**
+- Next.js 14 App Router project under `frontend/` — pinned to `next@14.2.35` (security-patched), `react@18.3.1`, `tailwindcss@3.4.17`, TypeScript 5
+- Static export config (`output: 'export'`) — frontend bundles to `frontend/out/` for shell consumption
+- Layout C: top bar (tab nav + Lock button) + main area
+  - Profiles tab: sidebar (profile list with status indicator + create form) + details panel
+  - Proxies tab: add-one form + batch-import textarea + table with per-row check / delete
+  - Settings tab: stub showing version/backend/theme
+- `LoginScreen` component — detects first-run via `unlock` probe → 412 means "needs init", offers password+confirm UI; otherwise shows simple unlock
+- `ProfileDetail`: launch / stop / regenerate-fingerprint / delete buttons + proxy selector + collapsible raw-fingerprint JSON
+- Typed `api.ts` client with `X-PB-Token` header, `ApiError` class, sessionStorage token persistence
+- `lib/types.ts` mirrors backend response shapes (`Profile`, `Proxy`, `HealthCheckResult`)
+- Dark theme as default (custom Tailwind palette: bg/elevated/border + accent + muted)
+
+**Desktop shell:**
+- `shell/run_app.py` — spawns `uvicorn backend.main:app` as subprocess, captures `PB_API_TOKEN=` from stdout via regex, starts a static HTTP server for `frontend/out/`, opens a 1280×800 pywebview window, injects `window.PB_API_BASE` so the SPA talks to the backend port
+- `atexit` cleanup terminates both subprocesses
+- `pywebview>=5.1` added to runtime deps
+
+### Verified
+- `npm run build` produces a static export with 4 routes
+- Backend startup helper captures token from stdout in <1s (smoke test)
+- 125 backend tests still pass (no regressions)
+
+### Scope reduction vs spec (deliberate)
+- shadcn/ui, TanStack Query/Table, Zustand, i18n via next-intl, command palette, hotkeys, virtualization for 1000+ profiles, Playwright e2e — deferred to post-v1 polish
+- Justification: spec calls out 4 weeks for M4; we built MVP UI (~15 components, all CRUD flows) in a focused subset. Each deferred item adds polish but not new capability.
+
+### Known limitations
+- Confirm-dialog uses native `confirm()` — replace with toast/modal later
+- No live WebSocket for profile status push — UI re-fetches on action
+- Single-instance lock not implemented (M6 packaging will add it)
+
 ## [v0.3.0-m3] — 2026-05-24
 
 ### Added
