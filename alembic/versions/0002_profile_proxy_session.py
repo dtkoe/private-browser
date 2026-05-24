@@ -5,6 +5,7 @@ Revises: 0001_initial
 Create Date: 2026-05-24
 """
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0002_profile_proxy_session"

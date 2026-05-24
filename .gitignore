@@ -47,3 +47,4 @@ logs_test/
 # PyInstaller / NSIS outputs
 *.spec
 installer/output/
+.serena/

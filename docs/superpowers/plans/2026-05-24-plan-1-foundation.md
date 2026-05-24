@@ -844,15 +844,19 @@ Expected: ImportError.
 
 - [ ] **Step 7.3: Implement `backend/core/db.py`**
 
+We use `sqlcipher3-wheels` (already installed in Task 4) — it's the `sqlcipher3` Python package with prebuilt Windows wheels. It does NOT ship a SQLAlchemy dialect of its own, so we pass it as the `module` parameter to override the default `sqlite3` DBAPI in SQLAlchemy's standard `sqlite` dialect.
+
+Note: SQLAlchemy 2.x `create_async_engine` can wrap sync DBAPIs via greenlet — but the safer/more standard approach is sync engine + `asyncio.to_thread` for async callsites. We'll use **sync** SQLAlchemy here. FastAPI handles sync endpoints fine via its threadpool, and SecurityService can call sync engine helpers.
+
 Create `backend/core/db.py`:
 ```python
-"""SQLCipher-backed async SQLAlchemy engine."""
+"""SQLCipher-backed SQLAlchemy engine (sync; called from async via to_thread)."""
 from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import event, text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+import sqlcipher3
+from sqlalchemy import Engine, create_engine, event, text
 
 
 class DatabaseUnlockError(Exception):
@@ -860,15 +864,14 @@ class DatabaseUnlockError(Exception):
 
 
 def _hex_key(key: bytes) -> str:
-    # SQLCipher accepts raw key in hex form: PRAGMA key = "x'HEX'"
     return key.hex()
 
 
-def _attach_sqlcipher_key(engine: AsyncEngine, key: bytes) -> None:
+def _attach_sqlcipher_key(engine: Engine, key: bytes) -> None:
     """Register a connect-listener that runs PRAGMA key on every new connection."""
     hex_key = _hex_key(key)
 
-    @event.listens_for(engine.sync_engine, "connect")
+    @event.listens_for(engine, "connect")
     def _on_connect(dbapi_conn, _):
         cur = dbapi_conn.cursor()
         cur.execute(f"PRAGMA key = \"x'{hex_key}'\";")
@@ -877,42 +880,52 @@ def _attach_sqlcipher_key(engine: AsyncEngine, key: bytes) -> None:
         cur.close()
 
 
-async def create_new_encrypted_db(path: Path, key: bytes) -> None:
+def _build_engine(path: Path, key: bytes) -> Engine:
+    """Build a SQLAlchemy Engine that uses sqlcipher3 as the DBAPI module."""
+    url = f"sqlite:///{path}"
+    engine = create_engine(url, module=sqlcipher3, future=True)
+    _attach_sqlcipher_key(engine, key)
+    return engine
+
+
+def create_new_encrypted_db(path: Path, key: bytes) -> None:
     """Create a brand new encrypted DB at `path` keyed with `key`."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         raise FileExistsError(path)
 
-    # pysqlcipher3 dialect for SQLAlchemy
-    url = f"sqlite+pysqlcipher://:{_hex_key(key)}@/{path}?cipher=aes-256-cbc&kdf_iter=64000"
-    engine = create_async_engine(url, future=True)
+    engine = _build_engine(path, key)
     try:
-        async with engine.begin() as conn:
-            # Sanity write so the DB is non-empty (forces real header)
-            await conn.execute(text("CREATE TABLE _init (v INTEGER)"))
-            await conn.execute(text("DROP TABLE _init"))
+        with engine.begin() as conn:
+            # Sanity write so the DB has a real (encrypted) header
+            conn.execute(text("CREATE TABLE _init (v INTEGER)"))
+            conn.execute(text("DROP TABLE _init"))
     finally:
-        await engine.dispose()
+        engine.dispose()
 
 
-async def open_encrypted_db(path: Path, key: bytes) -> AsyncEngine:
+def open_encrypted_db(path: Path, key: bytes) -> Engine:
     """Open existing encrypted DB. Raises DatabaseUnlockError on bad key."""
     if not path.is_file():
         raise FileNotFoundError(path)
 
-    url = f"sqlite+pysqlcipher://:{_hex_key(key)}@/{path}?cipher=aes-256-cbc&kdf_iter=64000"
-    engine = create_async_engine(url, future=True)
+    engine = _build_engine(path, key)
     try:
-        async with engine.connect() as conn:
-            # Trigger a read; wrong key => OperationalError "file is not a database"
-            await conn.execute(text("SELECT count(*) FROM sqlite_master"))
+        with engine.connect() as conn:
+            # Trigger a read; wrong key => DatabaseError "file is not a database"
+            conn.execute(text("SELECT count(*) FROM sqlite_master"))
     except Exception as exc:
-        await engine.dispose()
+        engine.dispose()
         raise DatabaseUnlockError(str(exc)) from exc
     return engine
 ```
 
-NOTE: the URL format above is `pysqlcipher3` SQLAlchemy dialect. If the project uses a different async driver, adjust accordingly. If `pysqlcipher3` doesn't have an async dialect, fall back to sync engine wrapped in `asyncio.to_thread` — but try the dialect first.
+NOTE on TESTS: Task 7's tests (`test_db_unlock.py`) and downstream tasks (security_service, audit_service) were originally written assuming async SQLAlchemy. Update them to use sync. Specifically:
+- Drop `@pytest.mark.asyncio` decorators where the test body only calls sync code
+- Replace `async def test_…` with `def test_…`
+- Replace `await engine.dispose()` with `engine.dispose()`
+- Replace `from sqlalchemy.ext.asyncio import AsyncEngine` with `from sqlalchemy import Engine`
+- `with engine.connect() as conn:` instead of `async with`
 
 - [ ] **Step 7.4: Run tests**
 
@@ -985,30 +998,109 @@ class AppSettings(Base):
     kdf_params_json: Mapped[str] = mapped_column(String, nullable=False)  # JSON KDFParams
 ```
 
-- [ ] **Step 8.3: Install + init Alembic**
+- [ ] **Step 8.3: Init Alembic (sync template)**
+
+Alembic is already installed (Task 4). We use the SYNC template (not async), since our SQLCipher engine is sync (Task 7 used `create_engine`, not `create_async_engine`).
+
+If the `alembic/` directory was created during Task 1 scaffold as an empty dir, this will fail because it's already there. In that case, run from inside it OR remove the empty dir first. Try this approach:
 
 ```bash
-pip install "alembic>=1.13"
-alembic init -t async alembic
+cd "/c/Users/kirill/Desktop/code/private-browser"
+source .venv/Scripts/activate
+# Remove our scaffolded empty alembic/ so alembic init can populate it fresh
+rm -rf alembic
+alembic init alembic   # uses sync template by default
 ```
+
+This creates `alembic.ini`, `alembic/env.py`, `alembic/script.py.mako`, `alembic/versions/` (empty), `alembic/README`.
+
 Then edit `alembic.ini`:
-- Comment out `sqlalchemy.url =` line (we'll set it programmatically).
+- Find the line `sqlalchemy.url = driver://user:pass@localhost/dbname` and replace with `sqlalchemy.url = ` (empty — we set it programmatically via env.py).
+- Set `script_location = alembic` (likely already correct).
 
-Edit `alembic/env.py` (replace `target_metadata = None`):
-```python
-from backend.models import Base
-from backend.models.app_settings import AppSettings  # noqa: F401  (force import)
-target_metadata = Base.metadata
-```
+Edit `alembic/env.py`. The Alembic-generated template has placeholders. Replace the WHOLE FILE with:
 
-And update the `run_migrations_online` to read URL from env var:
 ```python
+"""Alembic env.py for private-browser — uses sqlcipher3 module for encrypted DB."""
+from __future__ import annotations
+
 import os
+from logging.config import fileConfig
+from pathlib import Path
+
+import sqlcipher3
+from alembic import context
+from sqlalchemy import create_engine, event, pool
+
+from backend.models import Base
+from backend.models.app_settings import AppSettings  # noqa: F401 — force import for metadata
+
+
+config = context.config
+
+# Setup logging from alembic.ini if [loggers] sections exist
+if config.config_file_name is not None:
+    try:
+        fileConfig(config.config_file_name)
+    except Exception:
+        pass  # logging config is optional
+
+target_metadata = Base.metadata
+
+
+def _build_engine_for_alembic():
+    """Build sync engine with sqlcipher3 module + PRAGMA key on connect."""
+    db_path = Path(os.environ["PB_ALEMBIC_DB_PATH"])
+    key_hex = os.environ["PB_ALEMBIC_KEY_HEX"]
+
+    url = f"sqlite:///{db_path}"
+    engine = create_engine(url, module=sqlcipher3, poolclass=pool.NullPool, future=True)
+
+    @event.listens_for(engine, "connect")
+    def _on_connect(dbapi_conn, _):
+        cur = dbapi_conn.cursor()
+        cur.execute(f'PRAGMA key = "x\'{key_hex}\'";')
+        cur.execute("PRAGMA cipher_compatibility = 4;")
+        cur.close()
+
+    return engine
+
+
+def run_migrations_offline() -> None:
+    """Run migrations in 'offline' mode (no DB connection — emit SQL only).
+
+    For our encrypted DB, offline mode isn't meaningful, so we just emit
+    against the metadata using a SQLite literal binding."""
+    context.configure(
+        url="sqlite://",
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
 def run_migrations_online() -> None:
-    url = os.environ["PB_ALEMBIC_URL"]
-    connectable = create_async_engine(url, poolclass=pool.NullPool)
-    # ... rest as generated
+    """Run migrations in 'online' mode — connect to the encrypted DB."""
+    connectable = _build_engine_for_alembic()
+    with connectable.connect() as connection:
+        context.configure(connection=connection, target_metadata=target_metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
 ```
+
+Required env vars for alembic to work:
+- `PB_ALEMBIC_DB_PATH` — absolute path to the `.db` file
+- `PB_ALEMBIC_KEY_HEX` — derived key as hex string
+
+These get set programmatically by `SecurityService` when it calls `command.upgrade` (Task 9).
 
 - [ ] **Step 8.4: Generate initial migration**
 
@@ -1082,16 +1174,15 @@ git commit -m "feat(db): add AppSettings model + initial Alembic migration"
 - Create: `backend/services/security_service.py`
 - Create: `tests/integration/test_security_service.py`
 
-- [ ] **Step 9.1: Write failing tests**
+- [ ] **Step 9.1: Write failing tests (SYNC)**
 
 Create `tests/integration/test_security_service.py`:
 ```python
-import secrets
-import pytest
 from pathlib import Path
 
+import pytest
+
 from backend.core.config import Settings
-from backend.core.security import KDFParams
 from backend.services.security_service import (
     SecurityService,
     AlreadyInitialized,
@@ -1108,43 +1199,38 @@ def settings(tmp_path: Path, monkeypatch) -> Settings:
     return s
 
 
-@pytest.mark.asyncio
-async def test_initialize_creates_encrypted_db(settings: Settings):
+def test_initialize_creates_encrypted_db(settings: Settings):
     svc = SecurityService(settings)
-    await svc.initialize_with_password("MasterPass!1234")
+    svc.initialize_with_password("MasterPass!1234")
     assert settings.db_path.is_file()
 
 
-@pytest.mark.asyncio
-async def test_double_initialize_raises(settings: Settings):
+def test_double_initialize_raises(settings: Settings):
     svc = SecurityService(settings)
-    await svc.initialize_with_password("first-pass-XYZ")
+    svc.initialize_with_password("first-pass-XYZ")
     with pytest.raises(AlreadyInitialized):
-        await svc.initialize_with_password("second-pass")
+        svc.initialize_with_password("second-pass")
 
 
-@pytest.mark.asyncio
-async def test_unlock_with_correct_password(settings: Settings):
+def test_unlock_with_correct_password(settings: Settings):
     svc = SecurityService(settings)
-    await svc.initialize_with_password("CorrectHorse!")
-    engine = await svc.unlock("CorrectHorse!")
+    svc.initialize_with_password("CorrectHorse!")
+    engine = svc.unlock("CorrectHorse!")
     assert engine is not None
-    await engine.dispose()
+    engine.dispose()
 
 
-@pytest.mark.asyncio
-async def test_unlock_with_wrong_password_raises(settings: Settings):
+def test_unlock_with_wrong_password_raises(settings: Settings):
     svc = SecurityService(settings)
-    await svc.initialize_with_password("CorrectHorse!")
+    svc.initialize_with_password("CorrectHorse!")
     with pytest.raises(InvalidPassword):
-        await svc.unlock("nope")
+        svc.unlock("nope")
 
 
-@pytest.mark.asyncio
-async def test_unlock_before_init_raises(settings: Settings):
+def test_unlock_before_init_raises(settings: Settings):
     svc = SecurityService(settings)
     with pytest.raises(NotInitialized):
-        await svc.unlock("any")
+        svc.unlock("any")
 ```
 
 - [ ] **Step 9.2: Run, expect fail**
@@ -1160,15 +1246,15 @@ Create `backend/services/__init__.py` (empty file).
 
 Create `backend/services/security_service.py`:
 ```python
-"""High-level master-password lifecycle: init, unlock, change."""
+"""High-level master-password lifecycle: init, unlock, change. SYNC."""
 from __future__ import annotations
 
 import json
 import secrets
 from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy import Engine, select
+from sqlalchemy.orm import Session
 
 from backend.core.config import Settings
 from backend.core.db import (
@@ -1201,7 +1287,7 @@ class SecurityService:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    async def initialize_with_password(self, password: str) -> None:
+    def initialize_with_password(self, password: str) -> None:
         if self._settings.db_path.exists():
             raise AlreadyInitialized(str(self._settings.db_path))
 
@@ -1210,84 +1296,70 @@ class SecurityService:
         key = derive_key(password, salt, params)
         verifier = make_verifier(key)
 
-        await create_new_encrypted_db(self._settings.db_path, key)
+        create_new_encrypted_db(self._settings.db_path, key)
 
         # Apply Alembic migrations on the freshly-created encrypted DB
-        await _run_migrations(self._settings.db_path, key)
+        _run_migrations(self._settings.db_path, key)
 
         # Write salt sidecar (salt is not secret; used for KDF on subsequent unlocks)
         salt_path = self._settings.data_dir / "app.salt"
         salt_path.write_bytes(salt)
 
         # Seed app_settings row
-        engine = await open_encrypted_db(self._settings.db_path, key)
+        engine = open_encrypted_db(self._settings.db_path, key)
         try:
-            async with engine.begin() as conn:
-                Session = async_sessionmaker(bind=conn, class_=AsyncSession, expire_on_commit=False)
-                async with Session() as session:
-                    session.add(
-                        AppSettings(
-                            id=1,
-                            kdf_salt=salt,
-                            kdf_verifier=verifier,
-                            kdf_params_json=json.dumps(params.to_dict()),
-                        )
+            with Session(engine, expire_on_commit=False) as session:
+                session.add(
+                    AppSettings(
+                        id=1,
+                        kdf_salt=salt,
+                        kdf_verifier=verifier,
+                        kdf_params_json=json.dumps(params.to_dict()),
                     )
-                    await session.commit()
+                )
+                session.commit()
         finally:
-            await engine.dispose()
+            engine.dispose()
 
-    async def unlock(self, password: str) -> AsyncEngine:
+    def unlock(self, password: str) -> Engine:
         if not self._settings.db_path.exists():
             raise NotInitialized(str(self._settings.db_path))
 
-        # We don't know salt yet — open with derived key from candidate password.
-        # SQLCipher won't tell us "wrong password" without a real read attempt;
-        # so we open, then read app_settings to grab salt + verifier, then double-check.
-        # Use a 2-step approach: try opening with provided password derived against
-        # a *fresh* probe. Since SQLCipher salts are inside the DB header, key is what
-        # matters — we need the key derivation parameters as well. They are constants
-        # for v1 (KDFParams.default()), so derive directly.
-        params = KDFParams.default()
-
-        # Read salt from header by opening with NO salt knowledge — we can't.
-        # Workaround: store salt+verifier in app_settings AND ALSO write a sidecar
-        # file `app.salt` plaintext during initialize_with_password. Salt is not a
-        # secret; this is standard.
+        # Read salt from sidecar file (salt is not secret; stored next to encrypted DB).
         salt_path = self._settings.data_dir / "app.salt"
         if not salt_path.exists():
             raise NotInitialized("missing app.salt sidecar")
         salt = salt_path.read_bytes()
 
+        params = KDFParams.default()
         key = derive_key(password, salt, params)
         try:
-            engine = await open_encrypted_db(self._settings.db_path, key)
+            engine = open_encrypted_db(self._settings.db_path, key)
         except DatabaseUnlockError as exc:
             raise InvalidPassword() from exc
 
         # Belt + suspenders: verify HMAC verifier
         try:
-            async with engine.connect() as conn:
-                result = await conn.execute(select(AppSettings).limit(1))
-                row = result.scalar_one()
+            with Session(engine) as session:
+                row = session.execute(select(AppSettings).limit(1)).scalar_one()
                 if not check_verifier(key, row.kdf_verifier):
                     raise InvalidPassword()
         except InvalidPassword:
-            await engine.dispose()
+            engine.dispose()
             raise
 
         return engine
 
 
-async def _run_migrations(db_path: Path, key: bytes) -> None:
-    """Run Alembic upgrade head against the encrypted DB."""
+def _run_migrations(db_path: Path, key: bytes) -> None:
+    """Run Alembic upgrade head against the encrypted DB. Sync — call via to_thread if needed."""
     import os
     from alembic.config import Config
     from alembic import command
 
-    url = f"sqlite+pysqlcipher://:{key.hex()}@/{db_path}?cipher=aes-256-cbc&kdf_iter=64000"
+    os.environ["PB_ALEMBIC_DB_PATH"] = str(db_path)
+    os.environ["PB_ALEMBIC_KEY_HEX"] = key.hex()
     cfg = Config("alembic.ini")
-    os.environ["PB_ALEMBIC_URL"] = url
     cfg.set_main_option("script_location", "alembic")
     command.upgrade(cfg, "head")
 ```
@@ -1318,34 +1390,31 @@ git commit -m "feat(security): SecurityService for init/unlock with Alembic migr
 - Create: `tests/unit/test_audit.py`
 - Modify: `alembic/versions/0001_initial.py`
 
-- [ ] **Step 10.1: Write failing test**
+- [ ] **Step 10.1: Write failing test (SYNC)**
 
 Create `tests/unit/test_audit.py`:
 ```python
-import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker, async_sessionmaker
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
 
 from backend.models import Base
 from backend.models.audit_log import AuditLog
 from backend.services.audit_service import AuditService
 
 
-@pytest.mark.asyncio
-async def test_record_audit_entry(tmp_path):
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'a.db'}")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    svc = AuditService(Session)
-    await svc.record(actor="user", action="profile.create", target_type="profile", target_id="abc", details={"name": "x"})
+def test_record_audit_entry(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'a.db'}", future=True)
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(engine, expire_on_commit=False)
+    svc = AuditService(SessionLocal)
+    svc.record(actor="user", action="profile.create", target_type="profile", target_id="abc", details={"name": "x"})
 
-    async with Session() as session:
-        rows = (await session.execute(__import__("sqlalchemy").select(AuditLog))).scalars().all()
+    with SessionLocal() as session:
+        rows = session.execute(select(AuditLog)).scalars().all()
         assert len(rows) == 1
         assert rows[0].action == "profile.create"
         assert rows[0].actor == "user"
-    await engine.dispose()
+    engine.dispose()
 ```
 
 - [ ] **Step 10.2: Run, expect fail**
@@ -1418,16 +1487,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from backend.models.audit_log import AuditLog
 
 
 class AuditService:
-    def __init__(self, session_factory: async_sessionmaker) -> None:
+    def __init__(self, session_factory: sessionmaker) -> None:
         self._sf = session_factory
 
-    async def record(
+    def record(
         self,
         *,
         actor: str,
@@ -1436,7 +1505,7 @@ class AuditService:
         target_id: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> None:
-        async with self._sf() as session:
+        with self._sf() as session:
             session.add(
                 AuditLog(
                     actor=actor,
@@ -1446,7 +1515,7 @@ class AuditService:
                     details=json.dumps(details) if details else None,
                 )
             )
-            await session.commit()
+            session.commit()
 ```
 
 - [ ] **Step 10.6: Run tests**
@@ -1667,23 +1736,20 @@ git commit -m "feat(api): X-PB-Token middleware with exempt-path support"
 - Create: `backend/api/auth.py`
 - Modify: `tests/integration/test_api_auth.py` (extend)
 
-- [ ] **Step 13.1: Write failing test (extend existing file)**
+- [ ] **Step 13.1: Write failing test (extend existing file, SYNC TestClient)**
 
 Append to `tests/integration/test_api_auth.py`:
 ```python
-import secrets
-import pytest
 from pathlib import Path
 from fastapi import FastAPI
-from httpx import AsyncClient, ASGITransport
+from fastapi.testclient import TestClient
 
 from backend.core.config import Settings
 from backend.api.auth import build_auth_router
 from backend.services.security_service import SecurityService
 
 
-@pytest.mark.asyncio
-async def test_initialize_then_unlock(tmp_path: Path, monkeypatch):
+def test_initialize_then_unlock(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = Settings()
     settings.ensure_dirs()
@@ -1691,27 +1757,26 @@ async def test_initialize_then_unlock(tmp_path: Path, monkeypatch):
 
     app = FastAPI()
     app.include_router(build_auth_router(security))
+    client = TestClient(app)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
-        # Initialize
-        r = await ac.post("/api/auth/initialize", json={"password": "InitPass!1234"})
-        assert r.status_code == 201
+    # Initialize
+    r = client.post("/api/auth/initialize", json={"password": "InitPass!1234"})
+    assert r.status_code == 201
 
-        # Re-initialize should fail
-        r = await ac.post("/api/auth/initialize", json={"password": "anything"})
-        assert r.status_code == 409
+    # Re-initialize should fail
+    r = client.post("/api/auth/initialize", json={"password": "anythingLong12"})
+    assert r.status_code == 409
 
-        # Unlock with wrong password
-        r = await ac.post("/api/auth/unlock", json={"password": "wrong"})
-        assert r.status_code == 401
+    # Unlock with wrong password
+    r = client.post("/api/auth/unlock", json={"password": "wrongpassword12"})
+    assert r.status_code == 401
 
-        # Unlock with correct password
-        r = await ac.post("/api/auth/unlock", json={"password": "InitPass!1234"})
-        assert r.status_code == 200
+    # Unlock with correct password
+    r = client.post("/api/auth/unlock", json={"password": "InitPass!1234"})
+    assert r.status_code == 200
 
 
-@pytest.mark.asyncio
-async def test_unlock_before_initialize(tmp_path: Path, monkeypatch):
+def test_unlock_before_initialize(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = Settings()
     settings.ensure_dirs()
@@ -1719,10 +1784,10 @@ async def test_unlock_before_initialize(tmp_path: Path, monkeypatch):
 
     app = FastAPI()
     app.include_router(build_auth_router(security))
+    client = TestClient(app)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
-        r = await ac.post("/api/auth/unlock", json={"password": "any"})
-        assert r.status_code == 412   # precondition failed: not initialized
+    r = client.post("/api/auth/unlock", json={"password": "anylongpassword12"})
+    assert r.status_code == 412   # precondition failed: not initialized
 ```
 
 - [ ] **Step 13.2: Run, expect fail**
@@ -1757,22 +1822,22 @@ def build_auth_router(security: SecurityService) -> APIRouter:
     router = APIRouter(prefix="/api/auth", tags=["auth"])
 
     @router.post("/initialize", status_code=status.HTTP_201_CREATED)
-    async def initialize(body: _PasswordIn) -> dict:
+    def initialize(body: _PasswordIn) -> dict:
         try:
-            await security.initialize_with_password(body.password)
+            security.initialize_with_password(body.password)
         except AlreadyInitialized as exc:
             raise HTTPException(status_code=409, detail="already initialized") from exc
         return {"ok": True}
 
     @router.post("/unlock", status_code=status.HTTP_200_OK)
-    async def unlock(body: _PasswordIn) -> dict:
+    def unlock(body: _PasswordIn) -> dict:
         try:
-            engine = await security.unlock(body.password)
+            engine = security.unlock(body.password)
         except NotInitialized as exc:
             raise HTTPException(status_code=412, detail="not initialized") from exc
         except InvalidPassword as exc:
             raise HTTPException(status_code=401, detail="invalid password") from exc
-        await engine.dispose()  # caller of SecurityService normally keeps engine; here just verify
+        engine.dispose()  # caller of SecurityService normally keeps engine; here just verify
         return {"ok": True}
 
     return router
@@ -1980,8 +2045,9 @@ Verify in GitHub UI: workflow run is green.
 """M1 acceptance: fresh install → initialize → restart → unlock works."""
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from backend.core.config import Settings
 from backend.services.security_service import (
@@ -1991,8 +2057,7 @@ from backend.services.security_service import (
 )
 
 
-@pytest.mark.asyncio
-async def test_m1_full_happy_path(tmp_path: Path, monkeypatch):
+def test_m1_full_happy_path(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
 
     # 1. Fresh app, no DB
@@ -2000,10 +2065,10 @@ async def test_m1_full_happy_path(tmp_path: Path, monkeypatch):
     settings_1.ensure_dirs()
     sec_1 = SecurityService(settings_1)
     with pytest.raises(NotInitialized):
-        await sec_1.unlock("anything")
+        sec_1.unlock("anything")
 
     # 2. Initialize
-    await sec_1.initialize_with_password("MyMaster!2026")
+    sec_1.initialize_with_password("MyMaster!2026")
     assert settings_1.db_path.is_file()
     assert (settings_1.data_dir / "app.salt").is_file()
 
@@ -2013,21 +2078,20 @@ async def test_m1_full_happy_path(tmp_path: Path, monkeypatch):
 
     # 4. Wrong password → InvalidPassword
     with pytest.raises(InvalidPassword):
-        await sec_2.unlock("wrong-password!")
+        sec_2.unlock("wrong-password!")
 
     # 5. Correct password → engine
-    engine = await sec_2.unlock("MyMaster!2026")
+    engine = sec_2.unlock("MyMaster!2026")
     assert engine is not None
-    await engine.dispose()
+    engine.dispose()
 
 
-@pytest.mark.asyncio
-async def test_m1_db_is_not_plaintext_sqlite(tmp_path: Path, monkeypatch):
+def test_m1_db_is_not_plaintext_sqlite(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = Settings()
     settings.ensure_dirs()
     sec = SecurityService(settings)
-    await sec.initialize_with_password("Plaintext!Check12")
+    sec.initialize_with_password("Plaintext!Check12")
 
     header = settings.db_path.read_bytes()[:16]
     # Plaintext SQLite header starts with literal magic string.

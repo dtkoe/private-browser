@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import random
-from typing import Mapping, TypeVar
+from collections.abc import Mapping
+from typing import TypeVar
 
 _T = TypeVar("_T")
 
