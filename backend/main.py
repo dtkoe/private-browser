@@ -15,6 +15,7 @@ from backend.api.launch import build_launch_router
 from backend.api.middleware.auth_token import APITokenMiddleware
 from backend.api.profiles import build_profiles_router
 from backend.api.proxies import build_proxies_router
+from backend.api.system import build_system_router
 from backend.core.app_state import AppState
 from backend.core.config import Settings
 from backend.core.logging import configure_logging
@@ -167,6 +168,7 @@ def create_app() -> FastAPI:
     app.include_router(build_launch_router(profile_svc_factory, proxy_svc_factory, launch_mgr))
     app.include_router(build_export_import_router(profile_svc_factory, settings))
     app.include_router(build_extensions_router(profile_svc_factory))
+    app.include_router(build_system_router())
     return app
 
 

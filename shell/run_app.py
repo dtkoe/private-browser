@@ -18,6 +18,29 @@ FRONTEND_OUT = REPO_ROOT / "frontend" / "out"
 TOKEN_RE = re.compile(r"^PB_API_TOKEN=(\S+)\s*$")
 DEFAULT_PORT = 8769
 
+# Allow `from shell.camoufox_fetch import …` whether run as a script or as a module
+sys.path.insert(0, str(REPO_ROOT))
+from shell.camoufox_fetch import fetch_camoufox, is_camoufox_installed  # noqa: E402
+
+
+def ensure_camoufox(log=print) -> None:
+    if is_camoufox_installed():
+        log("[camoufox] already present.")
+        return
+    log("[camoufox] not installed — first-run download (this may take 5-10 min)…")
+    fetch_camoufox(log)
+
+
+def acquire_single_instance_lock() -> None:
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\private-browser-mutex-v1")
+    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        print("[shell] Another instance is already running.", file=sys.stderr)
+        sys.exit(1)
+
 
 def start_backend(port: int) -> tuple[subprocess.Popen, str]:
     env = os.environ.copy()
@@ -80,9 +103,12 @@ def serve_frontend(port: int) -> subprocess.Popen:
 
 
 def main() -> None:
+    acquire_single_instance_lock()
     if not FRONTEND_OUT.is_dir():
         print("[shell] frontend not built. Run: cd frontend && npm install && npm run build")
         sys.exit(1)
+
+    ensure_camoufox()
 
     backend_port = DEFAULT_PORT
     frontend_port = backend_port + 1

@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.6.0-m6] — 2026-05-24
+
+### Added
+
+**Distribution (M6):**
+- `build/private_browser.spec` — PyInstaller spec bundling backend + shell + frontend `out/` + Alembic + native deps (sqlcipher3, pywebview/winforms, argon2, apscheduler, python-multipart)
+- `build/build_app.py` — orchestrator: cleans, builds frontend, runs PyInstaller, zips portable bundle to `dist/private-browser-portable.zip`
+- `installer/private-browser.nsi` — NSIS installer for user-mode install to `%LOCALAPPDATA%`, Start Menu + Desktop shortcuts, `.pbprof` file association, Add/Remove Programs entry, uninstaller (preserves user data)
+- `installer/README.md` — how to build the installer
+- `shell/camoufox_fetch.py` — `is_camoufox_installed()` + `fetch_camoufox(log)` wrapping `python -m camoufox fetch`
+- `shell/run_app.py` — added `acquire_single_instance_lock()` (Windows mutex) + `ensure_camoufox()` first-run download before backend starts
+- `backend/services/update_checker.py` + `backend/api/system.py` — polls GitHub Releases for latest tag, compares with current version, exposes `GET /api/system/info` + `GET /api/system/check-updates`
+- Documentation:
+  - `README.md` — full replacement: features, end-user install, build-from-source, all doc links
+  - `docs/USER_GUIDE.md` — UI walkthrough (first run, profiles, proxies, export/import, extensions, lock, file layout)
+  - `docs/TROUBLESHOOTING.md` — Camoufox fetch failures, port conflicts, missing salt, lost master password, dead proxies, extension restart, sqlcipher reinstall, .pbprof tampering
+  - `CONTRIBUTING.md` — dev setup, code style, conventional commits, branching, TDD, milestone workflow, release recipe
+
+### Dependencies
+- `pyinstaller>=6.10` (dev only)
+
+### Verified
+- 146 backend tests pass (`pytest -m "not slow"`), incl. 4 new for M6
+- `ruff check .` — clean
+- Backend imports + 32 routes intact
+
+### Manual user steps (not automated)
+- Actually compile the `.exe`: `python build/build_app.py` (~1-2 min, ~80-200 MB output)
+- Build installer: `cd installer && makensis private-browser.nsi`
+- Publish: `gh release create vX.Y.Z dist/*.zip installer/*.exe`
+
+### What's now possible end-to-end
+1. Clone repo → `pip install -e ".[dev]"` → `npm install` + `npm run build` → `python shell/run_app.py` opens the native window
+2. Run `python build/build_app.py` to get a portable Windows bundle
+3. Run NSIS on the bundle to get a signed-ready installer
+4. Anyone with the installer can run the app without Python/Node installed
+
 ## [v0.5.0-m5] — 2026-05-24
 
 ### Added
