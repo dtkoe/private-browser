@@ -19,13 +19,28 @@ def camoufox_binary_path() -> Path:
 def is_camoufox_installed() -> bool:
     try:
         from camoufox.pkgman import installed_verstr
-        return bool(installed_verstr())
+        if installed_verstr():
+            return True
     except Exception:
-        return camoufox_binary_path().is_file()
+        pass
+    return camoufox_binary_path().is_file()
 
 
 def fetch_camoufox(log: Callable[[str], None]) -> None:
+    """In dev mode: subprocess `python -m camoufox fetch`.
+    In frozen mode: import CamoufoxFetcher and call install() directly — `sys.executable`
+    is the bundled exe (not python), so subprocess would re-launch ourselves."""
     log("[camoufox] downloading Camoufox bundle…")
+    if getattr(sys, "frozen", False):
+        from camoufox.pkgman import CamoufoxFetcher
+        fetcher = CamoufoxFetcher()
+        try:
+            fetcher.install()
+        except Exception as exc:
+            raise RuntimeError(f"camoufox install failed: {exc}") from exc
+        log("[camoufox] done.")
+        return
+
     cmd = [sys.executable, "-m", "camoufox", "fetch"]
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1

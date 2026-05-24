@@ -1,4 +1,9 @@
-"""Desktop shell: launches FastAPI backend as subprocess + opens native window pointing to it."""
+"""Desktop shell:
+
+- Dev mode (run from source): spawn uvicorn + http.server as subprocesses, open pywebview
+- Frozen mode (PyInstaller bundle): run uvicorn in a thread inside this process, serve
+  frontend via StaticFiles mounted on the same FastAPI app, open pywebview.
+"""
 from __future__ import annotations
 
 import atexit
@@ -13,13 +18,17 @@ from pathlib import Path
 
 import webview
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+IS_FROZEN = getattr(sys, "frozen", False)
+BUNDLE_ROOT = Path(sys._MEIPASS) if IS_FROZEN else None  # type: ignore[attr-defined]
+REPO_ROOT = BUNDLE_ROOT if IS_FROZEN else Path(__file__).resolve().parents[1]
 FRONTEND_OUT = REPO_ROOT / "frontend" / "out"
 TOKEN_RE = re.compile(r"^PB_API_TOKEN=(\S+)\s*$")
 DEFAULT_PORT = 8769
 
-# Allow `from shell.camoufox_fetch import …` whether run as a script or as a module
-sys.path.insert(0, str(REPO_ROOT))
+# `shell.camoufox_fetch` works from source; in frozen bundle imports resolve via sys.path[0]
+if not IS_FROZEN:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from shell.camoufox_fetch import fetch_camoufox, is_camoufox_installed  # noqa: E402
 
 
@@ -42,7 +51,10 @@ def acquire_single_instance_lock() -> None:
         sys.exit(1)
 
 
-def start_backend(port: int) -> tuple[subprocess.Popen, str]:
+# ------------------------- DEV MODE (subprocess) ----------------------------
+
+
+def start_backend_subprocess(port: int) -> tuple[subprocess.Popen, str]:
     env = os.environ.copy()
     env["PB_API_PORT"] = str(port)
     cmd = [
@@ -87,8 +99,7 @@ def start_backend(port: int) -> tuple[subprocess.Popen, str]:
     return proc, token_holder["v"]
 
 
-def serve_frontend(port: int) -> subprocess.Popen:
-    """Static-file server for the out/ build."""
+def serve_frontend_subprocess(port: int) -> subprocess.Popen:
     cmd = [
         sys.executable,
         "-m",
@@ -102,27 +113,80 @@ def serve_frontend(port: int) -> subprocess.Popen:
     return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
 
+# ------------------------- FROZEN MODE (in-process) -------------------------
+
+
+def start_backend_in_process(port: int) -> tuple[threading.Thread, str]:
+    """Start uvicorn in a thread and mount frontend StaticFiles on the same FastAPI app."""
+    import uvicorn
+    from fastapi.staticfiles import StaticFiles
+
+    from backend.main import create_app  # noqa: WPS433
+
+    app = create_app()
+    if FRONTEND_OUT.is_dir():
+        app.mount("/", StaticFiles(directory=str(FRONTEND_OUT), html=True), name="frontend")
+
+    token = app.state.settings.api_token  # type: ignore[attr-defined]
+
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
+    server = uvicorn.Server(config)
+
+    def run() -> None:
+        try:
+            server.run()
+        except SystemExit:
+            pass
+
+    t = threading.Thread(target=run, name="uvicorn", daemon=True)
+    t.start()
+
+    # wait for /healthz to respond
+    import urllib.request
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=1).read()
+            print(f"[backend] PB_API_TOKEN={token}", flush=True)
+            return t, token
+        except Exception:
+            time.sleep(0.2)
+    raise RuntimeError("backend did not become healthy in 30s")
+
+
+# ------------------------------ MAIN ---------------------------------------
+
+
 def main() -> None:
     acquire_single_instance_lock()
     if not FRONTEND_OUT.is_dir():
-        print("[shell] frontend not built. Run: cd frontend && npm install && npm run build")
+        print(f"[shell] frontend not built at {FRONTEND_OUT}")
         sys.exit(1)
 
     ensure_camoufox()
 
     backend_port = DEFAULT_PORT
-    frontend_port = backend_port + 1
 
-    print("[shell] starting backend…")
-    backend, token = start_backend(backend_port)
-    print(f"[shell] backend up, token={token[:8]}…")
-
-    print("[shell] starting static frontend server…")
-    frontend = serve_frontend(frontend_port)
-    time.sleep(0.5)
+    if IS_FROZEN:
+        print("[shell] starting backend (in-process, frozen mode)…")
+        _bt, token = start_backend_in_process(backend_port)
+        print(f"[shell] backend up, token={token[:8]}…")
+        # Same origin for everything — no separate frontend port, no CORS dance
+        url = f"http://127.0.0.1:{backend_port}/?t={token}&api={backend_port}"
+        cleanup_subprocesses: list[subprocess.Popen] = []
+    else:
+        print("[shell] starting backend (subprocess, dev mode)…")
+        backend, token = start_backend_subprocess(backend_port)
+        print(f"[shell] backend up, token={token[:8]}…")
+        frontend_port = backend_port + 1
+        print("[shell] starting static frontend server…")
+        frontend = serve_frontend_subprocess(frontend_port)
+        time.sleep(0.5)
+        url = f"http://127.0.0.1:{frontend_port}/?t={token}&api={backend_port}"
+        cleanup_subprocesses = [frontend, backend]
 
     def cleanup() -> None:
-        for p, label in [(frontend, "frontend"), (backend, "backend")]:
+        for p in cleanup_subprocesses:
             try:
                 if p.poll() is None:
                     if sys.platform == "win32":
@@ -138,13 +202,10 @@ def main() -> None:
                     p.kill()
                 except Exception:
                     pass
-            print(f"[shell] stopped {label}")
 
     atexit.register(cleanup)
 
-    url = f"http://127.0.0.1:{frontend_port}/?t={token}&api={backend_port}"
     js_inject = f"window.PB_API_BASE = 'http://127.0.0.1:{backend_port}';"
-
     window = webview.create_window("Private Browser", url, width=1280, height=800)
 
     def on_loaded() -> None:

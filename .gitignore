@@ -17,7 +17,10 @@ htmlcov/
 .venv/
 venv/
 dist/
-build/
+# PyInstaller writes work dirs under build/; keep our scripts
+build/*
+!build/build_app.py
+!build/private_browser.spec
 *.egg-info/
 
 # Node
@@ -44,7 +47,10 @@ logs_test/
 # Superpowers brainstorm transcripts
 .superpowers/
 
-# PyInstaller / NSIS outputs
-*.spec
+# PyInstaller / NSIS outputs (but keep our intentional spec)
 installer/output/
+installer/*.exe
 .serena/
+.playwright-mcp/
+# Ad-hoc Playwright screenshots in repo root
+/0?-*.png
