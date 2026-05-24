@@ -22,6 +22,12 @@ class APITokenMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
+
+        # Only protect /api/* and /ws. Static/frontend assets and exempt paths pass through.
+        is_protected = path.startswith("/api/") or path == "/ws" or path.startswith("/ws?")
+        if not is_protected:
+            return await call_next(request)
+
         if any(path.startswith(p) for p in self._exempt):
             return await call_next(request)
 

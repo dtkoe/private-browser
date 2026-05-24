@@ -2,6 +2,8 @@
 """PyInstaller spec for private-browser desktop bundle."""
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 block_cipher = None
 ROOT = Path(SPECPATH).parent
 
@@ -33,6 +35,13 @@ datas = [
     (str(ROOT / "alembic"), "alembic"),
     (str(ROOT / "alembic.ini"), "."),
 ]
+# Third-party data files PyInstaller misses by default
+datas += collect_data_files("apify_fingerprint_datapoints")
+datas += collect_data_files("browserforge")
+datas += collect_data_files("camoufox")
+datas += collect_data_files("language_tags")
+hidden += collect_submodules("browserforge")
+hidden += collect_submodules("camoufox")
 
 a = Analysis(
     [str(ROOT / "shell" / "run_app.py")],
