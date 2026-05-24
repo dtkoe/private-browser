@@ -9,6 +9,8 @@ import structlog
 from fastapi import APIRouter, FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 
+from backend.api.export_import import build_export_import_router
+from backend.api.extensions import build_extensions_router
 from backend.api.launch import build_launch_router
 from backend.api.middleware.auth_token import APITokenMiddleware
 from backend.api.profiles import build_profiles_router
@@ -163,6 +165,8 @@ def create_app() -> FastAPI:
     app.include_router(build_profiles_router(profile_svc_factory))
     app.include_router(build_proxies_router(proxy_svc_factory, make_checker))
     app.include_router(build_launch_router(profile_svc_factory, proxy_svc_factory, launch_mgr))
+    app.include_router(build_export_import_router(profile_svc_factory, settings))
+    app.include_router(build_extensions_router(profile_svc_factory))
     return app
 
 

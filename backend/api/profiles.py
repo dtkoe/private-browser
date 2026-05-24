@@ -41,6 +41,15 @@ class ProxyBindIn(BaseModel):
     proxy_id: str | None = None
 
 
+class CloneIn(BaseModel):
+    new_name: str | None = None
+    include_cookies: bool = True
+
+
+class BulkIdsIn(BaseModel):
+    ids: list[str]
+
+
 def _profile_to_dict(p) -> dict[str, Any]:
     return {
         "id": p.id,
@@ -124,6 +133,19 @@ def build_profiles_router(svc_factory: Callable[[AppState], ProfileService]) -> 
             return _profile_to_dict(svc.set_proxy(pid, body.proxy_id))
         except ProfileNotFound as exc:
             raise HTTPException(status_code=404, detail="profile not found") from exc
+
+    @router.post("/api/profiles/{pid}/clone", status_code=status.HTTP_201_CREATED)
+    def clone(pid: str, body: CloneIn, svc: ProfileService = Depends(_svc)) -> dict[str, Any]:
+        try:
+            return _profile_to_dict(
+                svc.clone(pid, new_name=body.new_name, include_cookies=body.include_cookies)
+            )
+        except ProfileNotFound as exc:
+            raise HTTPException(status_code=404, detail="profile not found") from exc
+
+    @router.post("/api/profiles/bulk/delete")
+    def bulk_delete(body: BulkIdsIn, svc: ProfileService = Depends(_svc)) -> dict[str, Any]:
+        return {"deleted": svc.bulk_delete(body.ids)}
 
     @router.post("/api/fingerprint/validate", dependencies=[Depends(require_unlocked)])
     def validate(body: ValidateIn) -> dict[str, Any]:

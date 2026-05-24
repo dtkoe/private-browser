@@ -10,7 +10,6 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
 import webview
 
@@ -42,7 +41,7 @@ def start_backend(port: int) -> tuple[subprocess.Popen, str]:
         text=True,
         bufsize=1,
     )
-    token_holder: dict[str, Optional[str]] = {"v": None}
+    token_holder: dict[str, str | None] = {"v": None}
     found = threading.Event()
 
     def pump() -> None:

@@ -1,6 +1,7 @@
 """Profile CRUD + regenerate."""
 from __future__ import annotations
 
+import secrets
 import shutil
 import time
 import uuid
@@ -20,6 +21,10 @@ from backend.services.fingerprint_generator import (
 
 class ProfileNotFound(LookupError):
     pass
+
+
+def _new_seed() -> int:
+    return secrets.randbits(64)
 
 
 class ProfileService:
@@ -158,6 +163,61 @@ class ProfileService:
             s.refresh(row)
             s.expunge(row)
         return row
+
+    def clone(
+        self,
+        profile_id: str,
+        *,
+        new_name: str | None = None,
+        include_cookies: bool = True,
+    ) -> Profile:
+        src = self.get(profile_id)
+        new_id = str(uuid.uuid4())
+        now = _now_ms()
+        new_fp = dict(src.fingerprint)
+        new_fp["_seeds"] = {
+            "canvas": _new_seed(),
+            "audio": _new_seed(),
+            "webgl_noise": _new_seed(),
+        }
+        new_fp["_meta"] = dict(new_fp.get("_meta", {}))
+        new_fp["_meta"]["generated_at"] = now
+
+        new_udd = self._settings.profiles_dir / new_id
+        if include_cookies and Path(src.user_data_dir).is_dir():
+            shutil.copytree(src.user_data_dir, new_udd)
+        else:
+            new_udd.mkdir(parents=True, exist_ok=False)
+
+        clone = Profile(
+            id=new_id,
+            name=new_name or f"{src.name} (clone)",
+            notes=src.notes,
+            tags=list(src.tags),
+            color=src.color,
+            created_at=now,
+            updated_at=now,
+            status="new",
+            fingerprint=new_fp,
+            proxy_id=src.proxy_id,
+            user_data_dir=str(new_udd),
+        )
+        with self._sf() as s:
+            s.add(clone)
+            s.commit()
+            s.refresh(clone)
+            s.expunge(clone)
+        return clone
+
+    def bulk_delete(self, profile_ids: list[str]) -> list[str]:
+        deleted: list[str] = []
+        for pid in profile_ids:
+            try:
+                self.delete(pid)
+                deleted.append(pid)
+            except ProfileNotFound:
+                pass
+        return deleted
 
     def delete(self, profile_id: str) -> None:
         with self._sf() as s:

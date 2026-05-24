@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.5.0-m5] — 2026-05-24
+
+### Added
+
+**.pbprof export/import + extensions + clone + bulk (M5):**
+- `ImportExportService` — `.pbprof` zip format: `manifest.json` (plaintext metadata) + `payload.enc` (AES-256-GCM ciphertext) + `signature.bin` (HMAC-SHA256(ciphertext, derived_key)). KDF: Argon2id with per-export salt. Manifest carries a password `verifier` (HMAC of fixed label with derived key) so import can distinguish "wrong password" (401) from "tampered file" (422).
+- `ExtensionService` — list/install/remove Firefox addons by writing `.xpi` files into the profile's `extensions/` dir. Parses `manifest.json` from the xpi to extract gecko addon id, name, version.
+- `ProfileService.clone(...)` — duplicates a profile with a new UUID, fresh per-profile seeds (canvas / audio / webgl_noise), and optionally copies the entire `user_data_dir` (cookies, prefs, extensions).
+- `ProfileService.bulk_delete([...])` — removes multiple profiles in one call, returns IDs actually deleted.
+- REST endpoints (all behind unlock gate):
+  - `POST /api/profiles/{id}/export` — returns the `.pbprof` file (binary stream) named `<safe_profile_name>.pbprof`. Optional `include_browser_data` (default true) bundles `cookies.sqlite`.
+  - `POST /api/import` (multipart: `password` + `file`) — creates a new profile from a `.pbprof` archive; 401 on wrong password, 422 on tampering / format errors.
+  - `POST /api/profiles/{id}/clone` — body `{new_name?, include_cookies?}`.
+  - `POST /api/profiles/bulk/delete` — body `{ids: [...]}`.
+  - `GET/POST/DELETE /api/profiles/{pid}/extensions[/{addon_id}]` — list / install (multipart `.xpi`) / remove.
+- M5 acceptance test exercises the full round-trip (create → install ext → clone → export → delete → import → cookies preserved → bulk delete) via HTTP.
+
+### Dependencies
+- `python-multipart>=0.0.9` (required by FastAPI for multipart/form-data uploads)
+
+### Verified
+- 142 backend tests pass (`pytest -m "not slow"`), incl. 12 new for M5
+- Round-trip preserves both fingerprint and cookies
+- Wrong-password import → 401; tampered payload import → 422
+- Extension installed in profile A is absent in profile B (isolation)
+- Clone produces distinct seeds and copies cookies when `include_cookies=true`
+
+### Deferred to M6
+- NSIS `.pbprof` file-association registration (needs installer)
+- Drag-drop import UI (works via file picker; drag-drop is polish)
+- Recovery code generation — current model is "lost master password = data is gone" by design
+- Activity / Logs viewer UI (backend `logs/app.log` is readable as-is)
+
 ## [v0.4.0-m4] — 2026-05-24
 
 ### Added
