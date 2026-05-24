@@ -107,10 +107,18 @@ class SecurityService:
 
 def _run_migrations(db_path: Path, key: bytes) -> None:
     """Run Alembic upgrade head against the encrypted DB."""
+    import sys
     os.environ["PB_ALEMBIC_DB_PATH"] = str(db_path)
     os.environ["PB_ALEMBIC_KEY_HEX"] = key.hex()
-    # Use absolute path to alembic.ini
-    cfg_path = Path("alembic.ini").resolve()
+    # Resolve alembic.ini path: in frozen mode (PyInstaller bundle) it lives under sys._MEIPASS.
+    # In dev mode CWD = repo root, so relative path works.
+    if getattr(sys, "frozen", False):
+        root = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+        cfg_path = root / "alembic.ini"
+        script_location = str(root / "alembic")
+    else:
+        cfg_path = Path("alembic.ini").resolve()
+        script_location = "alembic"
     cfg = Config(str(cfg_path))
-    cfg.set_main_option("script_location", "alembic")
+    cfg.set_main_option("script_location", script_location)
     command.upgrade(cfg, "head")

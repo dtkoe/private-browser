@@ -42,6 +42,8 @@ datas += collect_data_files("camoufox")
 datas += collect_data_files("language_tags")
 hidden += collect_submodules("browserforge")
 hidden += collect_submodules("camoufox")
+# Backend modules are dynamically imported by Alembic env.py — make sure they're all in
+hidden += collect_submodules("backend")
 
 a = Analysis(
     [str(ROOT / "shell" / "run_app.py")],
