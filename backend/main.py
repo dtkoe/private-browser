@@ -17,6 +17,7 @@ from backend.api.middleware.auth_token import APITokenMiddleware
 from backend.api.profiles import build_profiles_router
 from backend.api.proxies import build_proxies_router
 from backend.api.system import build_system_router
+from backend.api.websocket import build_ws_router
 from backend.core.app_state import AppState
 from backend.core.config import Settings
 from backend.core.logging import configure_logging
@@ -137,6 +138,12 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # Attach event bus to the running event loop so sync publishers can dispatch
+        import asyncio as _asyncio
+
+        from backend.services.event_bus import bus
+        bus.attach_loop(_asyncio.get_running_loop())
+
         log.info("app.start", port=settings.api_port, host=settings.api_host)
         print(f"PB_API_TOKEN={token}", flush=True, file=sys.stdout)
         try:
@@ -181,6 +188,7 @@ def create_app() -> FastAPI:
     app.include_router(build_export_import_router(profile_svc_factory, settings))
     app.include_router(build_extensions_router(profile_svc_factory))
     app.include_router(build_system_router())
+    app.include_router(build_ws_router(token))
     return app
 
 

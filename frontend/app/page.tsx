@@ -8,6 +8,7 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { Sidebar } from "@/components/Sidebar";
 import { api } from "@/lib/api";
 import type { Profile } from "@/lib/types";
+import { subscribeEvents } from "@/lib/ws";
 
 type Tab = "profiles" | "proxies" | "settings";
 
@@ -36,6 +37,13 @@ export default function Page() {
 
   useEffect(() => {
     if (unlocked) refreshProfiles();
+  }, [unlocked]);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    return subscribeEvents((e) => {
+      if (e.event === "profile_status_changed") refreshProfiles();
+    });
   }, [unlocked]);
 
   if (!unlocked) return <LoginScreen onUnlocked={() => setUnlocked(true)} />;

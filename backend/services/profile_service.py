@@ -162,6 +162,16 @@ class ProfileService:
             s.commit()
             s.refresh(row)
             s.expunge(row)
+        # Emit event for live UI updates (non-async; safe to swallow if bus has no loop attached)
+        try:
+            from backend.services.event_bus import bus
+            bus.publish({
+                "event": "profile_status_changed",
+                "profile_id": profile_id,
+                "status": status_value,
+            })
+        except Exception:
+            pass
         return row
 
     def clone(

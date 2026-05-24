@@ -8,7 +8,6 @@ import pytest
 
 from backend.services.fingerprint_generator import FingerprintGenerator, GeneratorOptions
 
-
 CANVAS_FP_JS = """() => {
   const canvas = document.createElement('canvas');
   canvas.width = 220; canvas.height = 30;
