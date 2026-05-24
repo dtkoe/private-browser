@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -143,6 +144,23 @@ def create_app() -> FastAPI:
 
         from backend.services.event_bus import bus
         bus.attach_loop(_asyncio.get_running_loop())
+
+        # PB_DEV_NO_AUTH: auto-init+unlock with a fixed dev key so the app boots
+        # straight to the main UI. Use only for local desktop dev/UX testing.
+        if os.environ.get("PB_DEV_NO_AUTH") == "1":
+            dev_pw = "PB-DEV-NO-AUTH-2026"
+            try:
+                security.initialize_with_password(dev_pw)
+                log.info("app.dev_no_auth.initialized")
+            except AlreadyInitialized:
+                pass
+            try:
+                engine = security.unlock(dev_pw)
+                state.set_unlocked(engine)
+                _start_scheduler_once()
+                log.info("app.dev_no_auth.unlocked")
+            except (InvalidPassword, NotInitialized) as exc:
+                log.warning("app.dev_no_auth.unlock_failed", error=str(exc))
 
         log.info("app.start", port=settings.api_port, host=settings.api_host)
         print(f"PB_API_TOKEN={token}", flush=True, file=sys.stdout)

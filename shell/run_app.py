@@ -166,6 +166,11 @@ def main() -> None:
         print(f"[shell] frontend not built at {FRONTEND_OUT}")
         sys.exit(1)
 
+    # Default: skip master password (PB_DEV_NO_AUTH=1). User can opt back in
+    # to auth by setting PB_REQUIRE_AUTH=1 before launching.
+    if os.environ.get("PB_REQUIRE_AUTH") != "1":
+        os.environ["PB_DEV_NO_AUTH"] = "1"
+
     ensure_camoufox()
 
     backend_port = DEFAULT_PORT

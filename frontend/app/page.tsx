@@ -26,6 +26,18 @@ export default function Page() {
         setUnlocked(h.unlocked);
       } catch {}
     })();
+    // Re-check every 2s while still showing the login screen — covers the case
+    // where backend auto-unlocked after the initial render (PB_DEV_NO_AUTH).
+    const interval = setInterval(async () => {
+      try {
+        const h = await api.health();
+        if (h.unlocked) {
+          setUnlocked(true);
+          clearInterval(interval);
+        }
+      } catch {}
+    }, 2000);
+    return () => clearInterval(interval);
   }, []);
 
   async function refreshProfiles() {

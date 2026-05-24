@@ -35,7 +35,19 @@ export function LoginScreen({ onUnlocked }: Props) {
       if (needsInit) {
         if (password.length < 12) throw new Error("password must be at least 12 characters");
         if (password !== confirm) throw new Error("passwords don't match");
-        await api.initialize(password);
+        try {
+          await api.initialize(password);
+        } catch (e: any) {
+          // Backend says DB already exists — switch to unlock mode and try with the
+          // password the user just typed. UX recovery for "stale needsInit state".
+          if (e instanceof ApiError && e.status === 409) {
+            setNeedsInit(false);
+            setConfirm("");
+            // proceed to unlock attempt below
+          } else {
+            throw e;
+          }
+        }
       }
       await api.unlock(password);
       onUnlocked();
