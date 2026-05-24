@@ -12,17 +12,22 @@ def camoufox_binary_path() -> Path:
     explicit = os.environ.get("PB_CAMOUFOX_DIR")
     if explicit:
         return Path(explicit) / "camoufox.exe"
-    base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "camoufox"
+    # Real install path mirrors camoufox.pkgman.INSTALL_DIR
+    base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "camoufox" / "camoufox" / "Cache"
     return base / "camoufox.exe"
 
 
 def is_camoufox_installed() -> bool:
+    """Returns True if Camoufox is verifiably installed, False otherwise.
+    Does NOT mutate state — caller can safely call fetch_camoufox if False."""
+    # Primary: ask the SDK for the version (reads Cache/version.json)
     try:
         from camoufox.pkgman import installed_verstr
         if installed_verstr():
             return True
     except Exception:
         pass
+    # Fallback: just check the binary file (handles transient version.json glitches)
     return camoufox_binary_path().is_file()
 
 
