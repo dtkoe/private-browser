@@ -16,6 +16,7 @@ export default function Page() {
   const [tab, setTab] = useState<Tab>("profiles");
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     (async () => {
@@ -103,6 +104,20 @@ export default function Page() {
               selectedId={selectedId}
               onSelect={setSelectedId}
               onCreated={refreshProfiles}
+              selectedIds={selectedIds}
+              onToggleSelect={(id) => {
+                setSelectedIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                });
+              }}
+              onClearSelection={() => setSelectedIds(new Set())}
+              onBulkDeleted={() => {
+                setSelectedId(null);
+                refreshProfiles();
+              }}
             />
             <ProfileDetail
               profile={selected}

@@ -25,6 +25,18 @@ export function setToken(t: string) {
 }
 
 export function loadStoredToken(): string | null {
+  // URL ?t=... wins over sessionStorage so a backend restart (= new token) takes effect
+  // without forcing the user to clear browser storage manually.
+  if (typeof window !== "undefined") {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const t = params.get("t");
+      if (t) {
+        setToken(t);
+        return t;
+      }
+    } catch {}
+  }
   if (token) return token;
   try {
     const t = sessionStorage.getItem("pb_token");
@@ -33,14 +45,6 @@ export function loadStoredToken(): string | null {
       return t;
     }
   } catch {}
-  if (typeof window !== "undefined") {
-    const params = new URLSearchParams(window.location.search);
-    const t = params.get("t");
-    if (t) {
-      setToken(t);
-      return t;
-    }
-  }
   return null;
 }
 

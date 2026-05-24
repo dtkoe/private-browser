@@ -33,6 +33,9 @@ from shell.camoufox_fetch import fetch_camoufox, is_camoufox_installed  # noqa: 
 
 
 def ensure_camoufox(log=print) -> None:
+    if os.environ.get("PB_SKIP_CAMOUFOX_CHECK") == "1":
+        log("[camoufox] skip check (PB_SKIP_CAMOUFOX_CHECK=1)")
+        return
     if is_camoufox_installed():
         log("[camoufox] already present.")
         return
