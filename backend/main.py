@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import APIRouter, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.api.export_import import build_export_import_router
@@ -156,6 +157,17 @@ def create_app() -> FastAPI:
         APITokenMiddleware,
         token=token,
         exempt_paths=("/healthz", "/docs", "/openapi.json", "/redoc"),
+    )
+    # CORS must be added AFTER the token middleware so it wraps it (outer).
+    # Starlette processes middleware in reverse-added order; the LAST add_middleware
+    # is the OUTERMOST layer that runs first. So CORS sees the request first and
+    # responds to OPTIONS preflight without auth.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://127.0.0.1:8770", "http://localhost:8770"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.get("/healthz")

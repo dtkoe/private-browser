@@ -17,6 +17,10 @@ class APITokenMiddleware(BaseHTTPMiddleware):
         self._exempt = tuple(exempt_paths)
 
     async def dispatch(self, request: Request, call_next):
+        # CORS preflight: let it through so browsers can negotiate
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         path = request.url.path
         if any(path.startswith(p) for p in self._exempt):
             return await call_next(request)

@@ -1,11 +1,19 @@
 import type { HealthCheckResult, Profile, Proxy, ProxyType } from "./types";
 
-const BASE =
-  typeof window !== "undefined" && (window as any).PB_API_BASE
-    ? ((window as any).PB_API_BASE as string)
-    : typeof window !== "undefined"
-      ? window.location.origin
-      : "http://127.0.0.1:8769";
+function resolveBase(): string {
+  if (typeof window === "undefined") return "http://127.0.0.1:8769";
+  // 1) Explicit override via shell injection
+  const inj = (window as any).PB_API_BASE;
+  if (typeof inj === "string" && inj) return inj;
+  // 2) ?api=PORT in URL (set by pywebview shell)
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const apiPort = params.get("api");
+    if (apiPort) return `http://127.0.0.1:${apiPort}`;
+  } catch {}
+  // 3) Same-origin (dev: `next dev` on backend port)
+  return window.location.origin;
+}
 
 let token: string | null = null;
 
@@ -46,7 +54,7 @@ async function req<T>(method: string, path: string, body?: any): Promise<T> {
   const t = loadStoredToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (t) headers["X-PB-Token"] = t;
-  const r = await fetch(`${BASE}${path}`, {
+  const r = await fetch(`${resolveBase()}${path}`, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
