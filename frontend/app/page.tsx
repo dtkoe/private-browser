@@ -46,7 +46,7 @@ export default function Page() {
       <header className="flex items-center justify-between border-b border-bg-border bg-bg-elevated px-4 py-2">
         <div className="flex items-center gap-2">
           <span className="font-semibold">Private Browser</span>
-          <span className="text-xs text-muted">v0.4.0</span>
+          <span className="text-xs text-muted">v0.6.0</span>
         </div>
         <nav className="flex gap-1">
           <TabBtn current={tab} value="profiles" onClick={() => setTab("profiles")}>
@@ -59,15 +59,41 @@ export default function Page() {
             Settings
           </TabBtn>
         </nav>
-        <button
-          className="rounded border border-bg-border px-2 py-1 text-xs text-muted hover:text-white"
-          onClick={async () => {
-            await api.lock();
-            setUnlocked(false);
-          }}
-        >
-          Lock
-        </button>
+        <div className="flex items-center gap-2">
+          <label className="cursor-pointer rounded border border-bg-border px-2 py-1 text-xs text-muted hover:text-white">
+            Import
+            <input
+              type="file"
+              accept=".pbprof"
+              hidden
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                const pw = window.prompt("Import password:");
+                if (!pw) {
+                  e.target.value = "";
+                  return;
+                }
+                try {
+                  await api.importProfile(pw, f);
+                  refreshProfiles();
+                } catch (ex: any) {
+                  window.alert(ex?.detail ?? String(ex));
+                }
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <button
+            className="rounded border border-bg-border px-2 py-1 text-xs text-muted hover:text-white"
+            onClick={async () => {
+              await api.lock();
+              setUnlocked(false);
+            }}
+          >
+            Lock
+          </button>
+        </div>
       </header>
       <main className="flex flex-1 overflow-hidden">
         {tab === "profiles" && (

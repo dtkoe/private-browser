@@ -106,4 +106,85 @@ export const api = {
   checkProxy: (id: string) => req<HealthCheckResult>("POST", `/api/proxies/${id}/check`),
   batchImportProxies: (text: string, type_default: ProxyType = "http") =>
     req<{ added: number; ids: string[] }>("POST", "/api/proxies/batch", { text, type_default }),
+
+  // M5: export / import / clone / bulk
+  exportProfile: async (id: string, password: string, include_browser_data = true) => {
+    const t = loadStoredToken();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (t) headers["X-PB-Token"] = t;
+    const r = await fetch(`${resolveBase()}/api/profiles/${id}/export`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ password, include_browser_data }),
+    });
+    if (!r.ok) {
+      let detail = r.statusText;
+      try {
+        const j = await r.json();
+        detail = j.detail ?? detail;
+      } catch {}
+      throw new ApiError(r.status, detail);
+    }
+    return r.blob();
+  },
+  importProfile: async (password: string, file: File) => {
+    const t = loadStoredToken();
+    const headers: Record<string, string> = {};
+    if (t) headers["X-PB-Token"] = t;
+    const fd = new FormData();
+    fd.append("password", password);
+    fd.append("file", file);
+    const r = await fetch(`${resolveBase()}/api/import`, { method: "POST", headers, body: fd });
+    if (!r.ok) {
+      let detail = r.statusText;
+      try {
+        const j = await r.json();
+        detail = j.detail ?? detail;
+      } catch {}
+      throw new ApiError(r.status, detail);
+    }
+    return r.json() as Promise<{ id: string; name: string }>;
+  },
+  cloneProfile: (id: string, new_name?: string, include_cookies = true) =>
+    req<Profile>("POST", `/api/profiles/${id}/clone`, { new_name, include_cookies }),
+  bulkDeleteProfiles: (ids: string[]) =>
+    req<{ deleted: string[] }>("POST", "/api/profiles/bulk/delete", { ids }),
+
+  // Extensions
+  listExtensions: (pid: string) =>
+    req<Array<{ id: string; name: string; version: string; filename: string }>>(
+      "GET",
+      `/api/profiles/${pid}/extensions`,
+    ),
+  installExtension: async (pid: string, file: File) => {
+    const t = loadStoredToken();
+    const headers: Record<string, string> = {};
+    if (t) headers["X-PB-Token"] = t;
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch(`${resolveBase()}/api/profiles/${pid}/extensions`, {
+      method: "POST",
+      headers,
+      body: fd,
+    });
+    if (!r.ok) {
+      let detail = r.statusText;
+      try {
+        const j = await r.json();
+        detail = j.detail ?? detail;
+      } catch {}
+      throw new ApiError(r.status, detail);
+    }
+    return r.json();
+  },
+  removeExtension: (pid: string, addon_id: string) =>
+    req<void>("DELETE", `/api/profiles/${pid}/extensions/${encodeURIComponent(addon_id)}`),
+
+  // System
+  systemInfo: () => req<{ version: string; name: string }>("GET", "/api/system/info"),
+  checkUpdates: () =>
+    req<{ current_version: string; latest_version: string | null; has_update: boolean; release_url: string | null }>(
+      "GET",
+      "/api/system/check-updates",
+    ),
 };

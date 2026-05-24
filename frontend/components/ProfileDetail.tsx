@@ -40,6 +40,33 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
     }
   }
 
+  async function handleExport() {
+    if (!profile) return;
+    const pw = window.prompt("Export password (≥12 chars):");
+    if (!pw) return;
+    if (pw.length < 12) {
+      setErr("password must be at least 12 chars");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const blob = await api.exportProfile(profile.id, pw, true);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${profile.name}.pbprof`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setErr(e?.detail ?? String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const fp = profile.fingerprint || {};
 
   return (
@@ -78,8 +105,22 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
           </button>
           <button
             disabled={busy}
+            onClick={() => action(() => api.cloneProfile(profile.id, `${profile.name} (clone)`, true))}
+            className="rounded border border-bg-border px-3 py-1 text-sm hover:bg-bg-border/40 disabled:opacity-50"
+          >
+            Clone
+          </button>
+          <button
+            disabled={busy}
+            onClick={handleExport}
+            className="rounded border border-bg-border px-3 py-1 text-sm hover:bg-bg-border/40 disabled:opacity-50"
+          >
+            Export
+          </button>
+          <button
+            disabled={busy}
             onClick={() => {
-              if (confirm(`Delete profile "${profile.name}"? This removes its browser data too.`)) {
+              if (window.confirm(`Delete profile "${profile.name}"? This removes its browser data too.`)) {
                 action(() => api.deleteProfile(profile.id).then(onDeleted));
               }
             }}
@@ -109,10 +150,78 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
         </select>
       </div>
 
+      <ExtensionsBlock profileId={profile.id} />
+
       <details className="rounded border border-bg-border bg-bg-elevated p-4">
         <summary className="cursor-pointer text-xs uppercase text-muted">Fingerprint (raw)</summary>
         <pre className="mt-3 overflow-x-auto text-xs">{JSON.stringify(fp, null, 2)}</pre>
       </details>
     </section>
+  );
+}
+
+function ExtensionsBlock({ profileId }: { profileId: string }) {
+  const [exts, setExts] = useState<Array<{ id: string; name: string; version: string; filename: string }>>([]);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      setExts(await api.listExtensions(profileId));
+    } catch {}
+  }
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId]);
+
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setErr(null);
+    try {
+      await api.installExtension(profileId, f);
+      refresh();
+    } catch (ex: any) {
+      setErr(ex?.detail ?? String(ex));
+    }
+    e.target.value = "";
+  }
+
+  return (
+    <div className="mb-6 rounded border border-bg-border bg-bg-elevated p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-xs uppercase text-muted">Extensions ({exts.length})</span>
+        <label className="cursor-pointer rounded border border-bg-border px-2 py-0.5 text-xs hover:bg-bg-border/40">
+          + Install .xpi
+          <input type="file" accept=".xpi" hidden onChange={onPick} />
+        </label>
+      </div>
+      {err && <div className="mb-2 text-xs text-red-400">{err}</div>}
+      {exts.length === 0 ? (
+        <div className="text-sm text-muted">No extensions installed.</div>
+      ) : (
+        <ul className="text-sm">
+          {exts.map((e) => (
+            <li
+              key={e.id}
+              className="flex items-center justify-between border-t border-bg-border/40 py-1.5 first:border-0"
+            >
+              <span>
+                {e.name} <span className="text-xs text-muted">v{e.version}</span>
+              </span>
+              <button
+                onClick={async () => {
+                  await api.removeExtension(profileId, e.id);
+                  refresh();
+                }}
+                className="text-xs text-red-400 hover:underline"
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
