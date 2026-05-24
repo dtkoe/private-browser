@@ -37,6 +37,10 @@ class ValidateIn(BaseModel):
     config: dict[str, Any]
 
 
+class ProxyBindIn(BaseModel):
+    proxy_id: str | None = None
+
+
 def _profile_to_dict(p) -> dict[str, Any]:
     return {
         "id": p.id,
@@ -111,6 +115,13 @@ def build_profiles_router(svc_factory: Callable[[AppState], ProfileService]) -> 
     def delete(pid: str, svc: ProfileService = Depends(_svc)) -> None:
         try:
             svc.delete(pid)
+        except ProfileNotFound as exc:
+            raise HTTPException(status_code=404, detail="profile not found") from exc
+
+    @router.patch("/api/profiles/{pid}/proxy")
+    def set_proxy(pid: str, body: ProxyBindIn, svc: ProfileService = Depends(_svc)) -> dict[str, Any]:
+        try:
+            return _profile_to_dict(svc.set_proxy(pid, body.proxy_id))
         except ProfileNotFound as exc:
             raise HTTPException(status_code=404, detail="profile not found") from exc
 

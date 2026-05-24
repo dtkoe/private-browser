@@ -126,6 +126,18 @@ class ProfileService:
             s.expunge(row)
         return row
 
+    def set_proxy(self, profile_id: str, proxy_id: str | None) -> Profile:
+        with self._sf() as s:
+            row = s.execute(select(Profile).where(Profile.id == profile_id)).scalar_one_or_none()
+            if row is None:
+                raise ProfileNotFound(profile_id)
+            row.proxy_id = proxy_id
+            row.updated_at = _now_ms()
+            s.commit()
+            s.refresh(row)
+            s.expunge(row)
+        return row
+
     def update_status(
         self,
         profile_id: str,

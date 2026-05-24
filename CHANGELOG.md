@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.3.0-m3] — 2026-05-24
+
+### Added
+
+**Proxy Pool + WebRTC (M3):**
+- `ProxyValidator` — format checks for `type` (`http`/`https`/`socks5`), host charset, port range; `parse_batch_line` accepts `host:port`, `host:port:user:pass`, and `scheme://host:port` lines
+- `ProxyService` — CRUD + `batch_import(text, type_default)` + `record_check(...)` for storing health check telemetry
+- `ProxyHealthChecker` — performs `GET https://ipinfo.io/json` via the proxy (`httpx.Client(proxy=…)`), captures IP / country / city / timezone / latency; failures recorded as `ok=False`
+- `BackgroundProxyScheduler` — APScheduler `BackgroundScheduler` running checks every 30 minutes plus an immediate run; started after first unlock, stopped in shutdown
+- REST endpoints (all behind unlock gate):
+  - `POST/GET/PATCH/DELETE /api/proxies` + `POST /api/proxies/{id}/check` + `POST /api/proxies/batch`
+  - `PATCH /api/profiles/{id}/proxy` — bind/unbind a proxy
+  - `POST /api/profiles/{id}/launch` now resolves bound proxy (404→409 if FK dangling) and passes `proxy={server,username,password}` to Camoufox
+- `CamoufoxLauncher` sets `block_webrtc=True` when no proxy is bound to prevent local-IP leakage; with a proxy, Camoufox's "proxy" WebRTC mode is used
+- M3 acceptance test: full HTTP flow (initialize → unlock → 5 proxies + 2 batched → bind to profile → launch carries proxy)
+
+### Dependencies
+- `httpx>=0.27` (proxy health check)
+- `apscheduler>=3.10` (background re-check)
+
+### Verified
+- 125 tests pass (`pytest -m "not slow"`)
+- Lint clean
+- Proxy bound to deleted proxy → launch returns 409 (no silent dangling FK)
+- Launch without proxy → `block_webrtc=True` engaged in Camoufox
+
+### Known limitations
+- No CSV import (batch import via plain text only; CSV deferred to M5 UI)
+- No "suggest re-generate timezone/locale" when binding proxy with different geo (deferred to M4 UI — backend has the data but UX is UI work)
+- No live `webrtc.peet.ws` integration test (manual verification only — backend lacks browser to run JS)
+
 ## [v0.2.0-m2] — 2026-05-24
 
 ### Added

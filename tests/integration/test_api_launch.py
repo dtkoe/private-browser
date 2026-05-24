@@ -8,6 +8,7 @@ from backend.core.app_state import AppState
 from backend.core.config import Settings
 from backend.services.launch_manager import LaunchManager
 from backend.services.profile_service import ProfileService
+from backend.services.proxy_service import ProxyService
 from backend.services.security_service import SecurityService
 from tests.unit.test_launch_manager import FakeLauncher
 
@@ -26,12 +27,15 @@ def client(tmp_path, monkeypatch):
     def svc_factory(s: AppState) -> ProfileService:
         return ProfileService(session_factory=s.session_factory, settings=settings)
 
+    def proxy_factory(s: AppState) -> ProxyService:
+        return ProxyService(session_factory=s.session_factory)
+
     mgr = LaunchManager(FakeLauncher())
 
     app = FastAPI()
     app.state.app_state = state
     app.include_router(build_profiles_router(svc_factory))
-    app.include_router(build_launch_router(svc_factory, mgr))
+    app.include_router(build_launch_router(svc_factory, proxy_factory, mgr))
     return TestClient(app)
 
 

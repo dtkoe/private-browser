@@ -51,6 +51,7 @@ class CamoufoxLauncher(Launcher):
                 with Camoufox(
                     config=cf_config,
                     proxy=proxy,
+                    block_webrtc=(proxy is None),
                     user_data_dir=user_data_dir,
                     persistent_context=True,
                     headless=False,
