@@ -55,6 +55,10 @@ class CamoufoxLauncher(Launcher):
                     user_data_dir=user_data_dir,
                     persistent_context=True,
                     headless=False,
+                    # We deliberately persist+replay a flat Camoufox config so the
+                    # same profile gets the same UA/screen/etc on every launch.
+                    # Camoufox warns about this; we acknowledge.
+                    i_know_what_im_doing=True,
                 ) as browser:
                     pid_ref.append(_extract_pid(browser))
                     ready.set()
