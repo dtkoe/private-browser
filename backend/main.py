@@ -87,7 +87,14 @@ def create_app() -> FastAPI:
     configure_logging(settings.logs_dir)
     log = structlog.get_logger("private-browser.startup")
 
-    token = generate_api_token()
+    # In PB_DEV_NO_AUTH mode use a deterministic token so backend restarts don't
+    # invalidate the pywebview frontend's cached token (which led to spurious 401s
+    # on Stop/Launch after a relaunch). The full-auth path still mints a random
+    # token per startup.
+    if os.environ.get("PB_DEV_NO_AUTH") == "1":
+        token = "pb-dev-no-auth-fixed-token-2026-genesis-browser"
+    else:
+        token = generate_api_token()
     settings.api_token = token
 
     state = AppState()

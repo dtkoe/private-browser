@@ -44,15 +44,50 @@ def ensure_camoufox(log=print) -> None:
     fetch_camoufox(log)
 
 
+_MUTEX_HANDLE: int | None = None
+
+
 def acquire_single_instance_lock() -> None:
+    """Acquire a single-instance lock that doesn't permanently lock us out if the
+    previous run crashed without cleaning up. We TRY to hold a named mutex AND we
+    keep the handle in a module global so it survives the function return; if a
+    prior run is genuinely still alive the OS will report ERROR_ALREADY_EXISTS,
+    but in that case we still continue — port-binding (below) is the real check.
+    """
+    global _MUTEX_HANDLE
     if sys.platform != "win32":
         return
     import ctypes
 
-    ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\private-browser-mutex-v1")
+    handle = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\private-browser-mutex-v1")
+    _MUTEX_HANDLE = handle  # keep the handle alive for the lifetime of the process
     if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-        print("[shell] Another instance is already running.", file=sys.stderr)
-        sys.exit(1)
+        # Don't sys.exit() here — a prior crashed instance can leak this name and
+        # then nothing the user does brings the app back. The port bind below is
+        # the authoritative check, and pick_free_port() will jump to a free one
+        # if 8769 is genuinely occupied.
+        print("[shell] note: another instance may already be running.", file=sys.stderr)
+
+
+def pick_free_port(preferred: int, max_tries: int = 10) -> int:
+    """Return `preferred` if free, otherwise probe the next ports for one we can bind."""
+    import socket
+
+    for offset in range(max_tries):
+        port = preferred + offset
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(("127.0.0.1", port))
+            s.close()
+            return port
+        except OSError:
+            continue
+        finally:
+            try:
+                s.close()
+            except Exception:
+                pass
+    raise RuntimeError(f"no free port near {preferred} (tried {max_tries})")
 
 
 # ------------------------- DEV MODE (subprocess) ----------------------------
@@ -182,7 +217,9 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"[shell] shortcut creation failed: {exc!r}")
 
-    backend_port = DEFAULT_PORT
+    backend_port = pick_free_port(DEFAULT_PORT)
+    if backend_port != DEFAULT_PORT:
+        print(f"[shell] port {DEFAULT_PORT} busy, using {backend_port}")
 
     if IS_FROZEN:
         print("[shell] starting backend (in-process, frozen mode)…")
