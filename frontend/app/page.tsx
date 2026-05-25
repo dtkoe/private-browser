@@ -71,9 +71,9 @@ export default function Page() {
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-bg-border bg-bg-elevated px-4 py-2">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-bg-border bg-bg-elevated px-4 py-2">
         <div className="flex items-center gap-2">
-          <span className="font-semibold">Private Browser</span>
+          <span className="font-semibold">Genesis Browser</span>
           <span className="text-xs text-muted">v0.7.0</span>
         </div>
         <nav className="flex gap-1">

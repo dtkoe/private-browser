@@ -124,8 +124,8 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
 
   return (
     <section className="flex-1 overflow-y-auto p-6">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div className="min-w-0 flex-1">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0 flex-1 basis-64">
           {editingName ? (
             <input
               autoFocus
@@ -157,7 +157,7 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
             {profile.status} · OS: {fp._os ?? "?"} · UA: {(fp["navigator.userAgent"] ?? "").slice(0, 60)}…
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {profile.status === "running" ? (
             <button
               disabled={busy}
@@ -212,7 +212,7 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
 
       {err && <div className="mb-4 rounded bg-red-900/40 px-3 py-2 text-sm text-red-300">{err}</div>}
 
-      <div className="mb-6 grid grid-cols-2 gap-4">
+      <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="rounded border border-bg-border bg-bg-elevated p-4">
           <div className="mb-2 text-xs uppercase text-muted">Notes</div>
           <textarea

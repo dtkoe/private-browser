@@ -87,7 +87,7 @@ export function ProxyPanel() {
     <section className="flex-1 overflow-y-auto p-6">
       <h2 className="mb-4 text-xl font-semibold">Proxies ({proxies.length})</h2>
 
-      <div className="mb-6 grid grid-cols-2 gap-4">
+      <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="rounded border border-bg-border bg-bg-elevated p-4">
           <div className="mb-3 text-xs uppercase text-muted">Add one</div>
           <input

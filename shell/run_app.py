@@ -214,7 +214,14 @@ def main() -> None:
     atexit.register(cleanup)
 
     js_inject = f"window.PB_API_BASE = 'http://127.0.0.1:{backend_port}';"
-    window = webview.create_window("Private Browser", url, width=1280, height=800)
+    window = webview.create_window(
+        "Genesis Browser",
+        url,
+        width=1280,
+        height=800,
+        maximized=True,
+        min_size=(900, 600),
+    )
 
     def on_loaded() -> None:
         try:

@@ -46,6 +46,26 @@ class CamoufoxLauncher(Launcher):
         # Strip our private metadata keys before handing to Camoufox config
         cf_config = {k: v for k, v in fingerprint.items() if not k.startswith("_")}
 
+        # Locale: prefer user-chosen geo, else en-US so the user sees a familiar UI
+        geo = fingerprint.get("_geo") or {}
+        locale = geo.get("locale") or "en-US"
+
+        # Firefox prefs to make the browser behave like a normal English Google user
+        firefox_user_prefs = {
+            "browser.search.defaultenginename": "Google",
+            "browser.search.defaultenginename.US": "Google",
+            "browser.urlbar.placeholderName": "Google",
+            "browser.urlbar.placeholderName.private": "Google",
+            "browser.startup.homepage": "https://www.google.com/",
+            "browser.startup.page": 1,  # open homepage on launch
+            "browser.newtabpage.enabled": True,
+            "browser.newtabpage.activity-stream.default.sites": "https://www.google.com/",
+            "intl.accept_languages": "en-US,en",
+            "general.useragent.locale": "en-US",
+            # Keep window manageable; user can maximise themselves
+            "browser.tabs.warnOnClose": False,
+        }
+
         def runner() -> None:
             try:
                 with Camoufox(
@@ -55,12 +75,24 @@ class CamoufoxLauncher(Launcher):
                     user_data_dir=user_data_dir,
                     persistent_context=True,
                     headless=False,
+                    window=(1280, 800),
+                    locale=locale,
+                    firefox_user_prefs=firefox_user_prefs,
                     # We deliberately persist+replay a flat Camoufox config so the
                     # same profile gets the same UA/screen/etc on every launch.
                     # Camoufox warns about this; we acknowledge.
                     i_know_what_im_doing=True,
                 ) as browser:
                     pid_ref.append(_extract_pid(browser))
+                    # Land on Google: reuse the initial tab if Camoufox already
+                    # opened one (persistent context); otherwise create a new tab.
+                    # Avoids duplicate Google tabs on relaunch.
+                    try:
+                        pages = list(getattr(browser, "pages", []) or [])
+                        page = pages[0] if pages else browser.new_page()
+                        page.goto("https://www.google.com/", timeout=15000)
+                    except Exception:
+                        pass
                     ready.set()
                     while not stopper.is_set():
                         if not _browser_alive(browser):
