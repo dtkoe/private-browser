@@ -32,15 +32,17 @@ GOOGLE_HL_GL: dict[str, tuple[str, str]] = {
 }
 
 
-def _primary_screen_size() -> tuple[int, int]:
-    """Work-area of the primary monitor in LOGICAL pixels (taskbar excluded).
+def _primary_screen_metrics() -> tuple[int, int, int, int]:
+    """Return (screen_w, screen_h, work_w, work_h) of the primary monitor in
+    LOGICAL pixels (the units Firefox sizes its chrome in).
 
-    We deliberately do NOT call SetProcessDPIAware: Firefox/Camoufox sizes its
-    window in logical pixels, so on a 1.25x-scaled display we want 1536×864
-    (logical), not 1920×1080 (physical) — otherwise the window goes off-screen.
-    `SystemParametersInfoW(SPI_GETWORKAREA)` returns the work-area rect
-    excluding the taskbar in the process's current DPI awareness mode (default
-    DPI-unaware = logical pixels).
+    - `screen_w/h` = full monitor size (matches navigator/screen.width/height a
+      real user would have on this machine — including the taskbar strip).
+    - `work_w/h`   = work area, taskbar excluded — the size a maximized window
+      occupies, matching window.outerWidth/Height and screen.availWidth/Height.
+
+    We deliberately do NOT call SetProcessDPIAware: Firefox uses logical pixels,
+    so on a 1.25x-scaled 1920×1080 display we want 1536×864, not 1920×1080.
     """
     if sys.platform == "win32":
         try:
@@ -48,20 +50,25 @@ def _primary_screen_size() -> tuple[int, int]:
             from ctypes import wintypes
 
             user32 = ctypes.windll.user32
+            sw = user32.GetSystemMetrics(0)  # SM_CXSCREEN — full primary
+            sh = user32.GetSystemMetrics(1)  # SM_CYSCREEN
             SPI_GETWORKAREA = 0x0030
             rect = wintypes.RECT()
             if user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
-                w = rect.right - rect.left
-                h = rect.bottom - rect.top
-                if w > 0 and h > 0:
-                    return max(w, 1024), max(h, 700)
-            # Fallback if SPI fails: GetSystemMetrics without DPI-aware → logical
-            sw = user32.GetSystemMetrics(0)
-            sh = user32.GetSystemMetrics(1)
-            return max(sw, 1024), max(sh - 50, 700)
+                ww = max(rect.right - rect.left, 1024)
+                wh = max(rect.bottom - rect.top, 700)
+            else:
+                ww, wh = sw, max(sh - 48, 700)
+            return max(sw, 1024), max(sh, 768), ww, wh
         except Exception:
             pass
-    return 1280, 800
+    return 1366, 768, 1366, 720
+
+
+def _primary_screen_size() -> tuple[int, int]:
+    """Back-compat: just the work area, used as the initial window= hint."""
+    _, _, ww, wh = _primary_screen_metrics()
+    return ww, wh
 
 
 def _list_top_mozilla_windows() -> list[tuple[int, int]]:
@@ -183,17 +190,28 @@ class CamoufoxLauncher(Launcher):
         ready = threading.Event()
         err_ref: list[BaseException] = []
 
-        # Strip our private metadata keys before handing to Camoufox config.
-        # `timezone` is already in cf_config (no _ prefix) — it propagates to
-        # Intl.DateTimeFormat via Camoufox's C++ patches.
-        # IMPORTANT: We do NOT touch `window.outerWidth/outerHeight/screenX/Y`
-        # or `screen.width/height` here — they're the spoofed JS values, randomized
-        # per profile for fingerprint masking. Camoufox intercepts the JS reads
-        # and returns these values regardless of the real OS window size, so we
-        # can let SW_MAXIMIZE (below) make the OS window fill the screen WITHOUT
-        # changing what websites see in JS.
         cf_config = {k: v for k, v in fingerprint.items() if not k.startswith("_")}
-        win_w, win_h = _primary_screen_size()
+
+        # KEY INSIGHT (user 2026-05-25): Firefox renders its chrome (URL bar,
+        # tab strip, buttons) using the SPOOFED window.outerWidth/Height, not
+        # the real OS window size. If those values don't match the actual OS
+        # window, the chrome lays out wrong — buttons clip / new-tab button
+        # goes off-screen.
+        #
+        # We resolve this by spoofing `screen.*` and `window.outer*` to the
+        # USER's REAL screen, then sizing the OS window to match. Every user
+        # gets a plausibly-shaped fingerprint (their real monitor dimensions),
+        # the chrome renders inside the visible window, and SW_MAXIMIZE just
+        # works because the spoofed values agree with the OS reality.
+        screen_w, screen_h, win_w, win_h = _primary_screen_metrics()
+        cf_config["screen.width"] = screen_w
+        cf_config["screen.height"] = screen_h
+        cf_config["screen.availWidth"] = win_w
+        cf_config["screen.availHeight"] = win_h
+        cf_config["window.outerWidth"] = win_w
+        cf_config["window.outerHeight"] = win_h
+        cf_config["window.screenX"] = 0
+        cf_config["window.screenY"] = 0
 
         # Locale: prefer profile geo, else en-US so the user sees a familiar UI
         geo = fingerprint.get("_geo") or {}
