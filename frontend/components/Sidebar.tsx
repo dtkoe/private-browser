@@ -28,6 +28,7 @@ export function Sidebar({
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [targetOs, setTargetOs] = useState<"" | "windows" | "macos" | "linux">("");
+  const [locale, setLocale] = useState<string>("en-US");
   const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
 
@@ -37,9 +38,11 @@ export function Sidebar({
       await api.createProfile({
         name: name || `Profile ${Date.now()}`,
         target_os: targetOs || undefined,
+        locale: locale || undefined,
       });
       setName("");
       setTargetOs("");
+      setLocale("en-US");
       setCreating(false);
       onCreated();
     } catch (e: any) {
@@ -120,6 +123,26 @@ export function Sidebar({
             <option value="windows">Windows</option>
             <option value="macos">macOS</option>
             <option value="linux">Linux</option>
+          </select>
+          <select
+            value={locale}
+            onChange={(e) => setLocale(e.target.value)}
+            title="Language & timezone the profile will pretend to use"
+            className="mb-2 w-full rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
+          >
+            <option value="en-US">English (US) — America/New_York</option>
+            <option value="en-GB">English (UK) — Europe/London</option>
+            <option value="ru-RU">Russian — Europe/Moscow</option>
+            <option value="de-DE">German — Europe/Berlin</option>
+            <option value="fr-FR">French — Europe/Paris</option>
+            <option value="es-ES">Spanish — Europe/Madrid</option>
+            <option value="it-IT">Italian — Europe/Rome</option>
+            <option value="pt-BR">Portuguese (BR) — America/Sao_Paulo</option>
+            <option value="ja-JP">Japanese — Asia/Tokyo</option>
+            <option value="zh-CN">Chinese (CN) — Asia/Shanghai</option>
+            <option value="uk-UA">Ukrainian — Europe/Kyiv</option>
+            <option value="pl-PL">Polish — Europe/Warsaw</option>
+            <option value="tr-TR">Turkish — Europe/Istanbul</option>
           </select>
           {err && <div className="mb-2 text-xs text-red-400">{err}</div>}
           <div className="flex gap-2">

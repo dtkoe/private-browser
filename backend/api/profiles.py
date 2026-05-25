@@ -20,6 +20,8 @@ class CreateProfileIn(BaseModel):
     tags: list[str] | None = None
     color: str | None = None
     target_os: OSLiteral | None = None
+    locale: str | None = None
+    timezone: str | None = None
 
 
 class UpdateProfileIn(BaseModel):
@@ -31,6 +33,8 @@ class UpdateProfileIn(BaseModel):
 
 class RegenerateIn(BaseModel):
     target_os: OSLiteral | None = None
+    locale: str | None = None
+    timezone: str | None = None
 
 
 class ValidateIn(BaseModel):
@@ -86,6 +90,8 @@ def build_profiles_router(svc_factory: Callable[[AppState], ProfileService]) -> 
             tags=body.tags,
             color=body.color,
             target_os=body.target_os,
+            locale=body.locale,
+            timezone=body.timezone,
         )
         return _profile_to_dict(p)
 
@@ -116,7 +122,9 @@ def build_profiles_router(svc_factory: Callable[[AppState], ProfileService]) -> 
     @router.post("/api/profiles/{pid}/regenerate")
     def regenerate(pid: str, body: RegenerateIn, svc: ProfileService = Depends(_svc)) -> dict[str, Any]:
         try:
-            return _profile_to_dict(svc.regenerate_fingerprint(pid, target_os=body.target_os))
+            return _profile_to_dict(svc.regenerate_fingerprint(
+                pid, target_os=body.target_os, locale=body.locale, timezone=body.timezone,
+            ))
         except ProfileNotFound as exc:
             raise HTTPException(status_code=404, detail="profile not found") from exc
 

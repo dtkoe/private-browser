@@ -15,7 +15,7 @@ def gen() -> FingerprintGenerator:
 
 def test_generate_returns_dict_with_meta(gen):
     fp = gen.generate()
-    assert fp["_meta"]["schema_version"] == 1
+    assert fp["_meta"]["schema_version"] >= 2  # bumped in v0.2.0 for locale+timezone in _geo
     assert fp["_meta"]["generated_at"] > 0
     assert "generator_version" in fp["_meta"]
 
@@ -89,12 +89,34 @@ def test_generate_with_geo_sets_geo_fields(gen):
         "longitude": 13.405,
     }
     fp = gen.generate(GeneratorOptions(target_os="windows", target_geo=geo))
-    assert fp["_geo"] == geo
+    # All caller-supplied geo keys should be preserved verbatim.
+    for k, v in geo.items():
+        assert fp["_geo"][k] == v, f"{k} not preserved"
+    # And the generator may add a default locale alongside the user's geo.
+    assert "locale" in fp["_geo"]
 
 
-def test_generate_without_geo_has_null_geo(gen):
+def test_generate_without_geo_fills_default_locale_and_timezone(gen):
+    """v0.2.0: _geo is always populated with locale+timezone defaults so the
+    Camoufox launcher can plug Intl.timeZone (was leaking the host TZ before)."""
     fp = gen.generate()
-    assert fp["_geo"] is None
+    assert fp["_geo"]["locale"] == "en-US"
+    assert fp["_geo"]["timezone"] == "America/New_York"
+    # And the timezone must propagate into Camoufox config so it actually applies.
+    assert fp["timezone"] == "America/New_York"
+
+
+def test_generate_with_locale_picks_matching_timezone(gen):
+    fp = gen.generate(GeneratorOptions(locale="ru-RU"))
+    assert fp["_geo"]["locale"] == "ru-RU"
+    assert fp["_geo"]["timezone"] == "Europe/Moscow"
+    assert fp["timezone"] == "Europe/Moscow"
+
+
+def test_generate_explicit_timezone_overrides_locale_default(gen):
+    fp = gen.generate(GeneratorOptions(locale="en-US", target_geo={"timezone": "Asia/Tokyo"}))
+    assert fp["_geo"]["timezone"] == "Asia/Tokyo"
+    assert fp["timezone"] == "Asia/Tokyo"
 
 
 def test_generated_config_serializable_as_json(gen):

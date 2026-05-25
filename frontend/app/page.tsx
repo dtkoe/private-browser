@@ -88,7 +88,7 @@ export default function Page() {
           </TabBtn>
         </nav>
         <div className="flex items-center gap-2">
-          <label className="cursor-pointer rounded border border-bg-border px-2 py-1 text-xs text-muted hover:text-white">
+          <label className="cursor-pointer rounded border border-white/20 bg-bg/60 px-3 py-1.5 text-xs font-medium text-white/90 hover:border-white/40 hover:bg-bg/80">
             Import
             <input
               type="file"
@@ -113,7 +113,7 @@ export default function Page() {
             />
           </label>
           <button
-            className="rounded border border-bg-border px-2 py-1 text-xs text-muted hover:text-white"
+            className="rounded border border-white/20 bg-bg/60 px-3 py-1.5 text-xs font-medium text-white/90 hover:border-white/40 hover:bg-bg/80"
             onClick={async () => {
               await api.lock();
               setUnlocked(false);

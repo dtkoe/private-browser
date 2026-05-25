@@ -82,8 +82,13 @@ export const api = {
   lock: () => req<{ ok: boolean }>("POST", "/api/auth/lock"),
 
   listProfiles: () => req<Profile[]>("GET", "/api/profiles"),
-  createProfile: (data: { name: string; target_os?: "windows" | "macos" | "linux"; notes?: string }) =>
-    req<Profile>("POST", "/api/profiles", data),
+  createProfile: (data: {
+    name: string;
+    target_os?: "windows" | "macos" | "linux";
+    notes?: string;
+    locale?: string;
+    timezone?: string;
+  }) => req<Profile>("POST", "/api/profiles", data),
   updateProfile: (id: string, data: Partial<Pick<Profile, "name" | "notes" | "tags" | "color">>) =>
     req<Profile>("PATCH", `/api/profiles/${id}`, data),
   regenerateProfile: (id: string, target_os?: "windows" | "macos" | "linux") =>

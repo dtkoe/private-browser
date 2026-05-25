@@ -43,14 +43,22 @@ class CamoufoxLauncher(Launcher):
         ready = threading.Event()
         err_ref: list[BaseException] = []
 
-        # Strip our private metadata keys before handing to Camoufox config
+        # Strip our private metadata keys before handing to Camoufox config.
+        # `timezone` is already in cf_config (no _ prefix) — it propagates to
+        # Intl.DateTimeFormat via Camoufox's C++ patches.
         cf_config = {k: v for k, v in fingerprint.items() if not k.startswith("_")}
 
-        # Locale: prefer user-chosen geo, else en-US so the user sees a familiar UI
+        # Locale: prefer profile geo, else en-US so the user sees a familiar UI
         geo = fingerprint.get("_geo") or {}
         locale = geo.get("locale") or "en-US"
+        # `intl.accept_languages` controls the HTTP Accept-Language header.
+        # Build a graceful fallback list: e.g. "ru-RU,ru,en" so sites that
+        # don't support the primary locale still get a usable language.
+        lang_only = locale.split("-", 1)[0]
+        accept_languages = ",".join(dict.fromkeys([locale, lang_only, "en"]))
 
-        # Firefox prefs to make the browser behave like a normal English Google user
+        # Firefox prefs that make the browser behave like a normal user of `locale`,
+        # with Google as the search engine and homepage.
         firefox_user_prefs = {
             "browser.search.defaultenginename": "Google",
             "browser.search.defaultenginename.US": "Google",
@@ -60,8 +68,8 @@ class CamoufoxLauncher(Launcher):
             "browser.startup.page": 1,  # open homepage on launch
             "browser.newtabpage.enabled": True,
             "browser.newtabpage.activity-stream.default.sites": "https://www.google.com/",
-            "intl.accept_languages": "en-US,en",
-            "general.useragent.locale": "en-US",
+            "intl.accept_languages": accept_languages,
+            "general.useragent.locale": locale,
             # Keep window manageable; user can maximise themselves
             "browser.tabs.warnOnClose": False,
         }

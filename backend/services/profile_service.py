@@ -54,10 +54,13 @@ class ProfileService:
         tags: list[str] | None = None,
         color: str | None = None,
         target_os: OSName | None = None,
+        locale: str | None = None,
+        timezone: str | None = None,
     ) -> Profile:
         pid = str(uuid.uuid4())
         now = _now_ms()
-        fp = self._gen.generate(GeneratorOptions(target_os=target_os))
+        geo = _geo_from(locale, timezone)
+        fp = self._gen.generate(GeneratorOptions(target_os=target_os, locale=locale, target_geo=geo))
         user_data_dir = self._settings.profiles_dir / pid
         user_data_dir.mkdir(parents=True, exist_ok=False)
 
@@ -129,12 +132,22 @@ class ProfileService:
         profile_id: str,
         *,
         target_os: OSName | None = None,
+        locale: str | None = None,
+        timezone: str | None = None,
     ) -> Profile:
         with self._sf() as s:
             row = s.execute(select(Profile).where(Profile.id == profile_id)).scalar_one_or_none()
             if row is None:
                 raise ProfileNotFound(profile_id)
-            row.fingerprint = self._gen.generate(GeneratorOptions(target_os=target_os))
+            # If caller didn't pass locale/timezone, preserve whatever the
+            # existing profile had so regeneration doesn't silently flip locale.
+            prev_geo = (row.fingerprint or {}).get("_geo") or {}
+            eff_locale = locale or prev_geo.get("locale")
+            eff_tz = timezone or prev_geo.get("timezone")
+            geo = _geo_from(eff_locale, eff_tz)
+            row.fingerprint = self._gen.generate(GeneratorOptions(
+                target_os=target_os, locale=eff_locale, target_geo=geo,
+            ))
             row.updated_at = _now_ms()
             s.commit()
             s.refresh(row)
@@ -252,3 +265,13 @@ class ProfileService:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _geo_from(locale: str | None, timezone: str | None) -> dict | None:
+    """Build a GeoInfo dict for the generator only when at least one field is set."""
+    out: dict = {}
+    if locale:
+        out["locale"] = locale
+    if timezone:
+        out["timezone"] = timezone
+    return out or None
