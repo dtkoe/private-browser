@@ -270,6 +270,14 @@ class CamoufoxLauncher(Launcher):
                     window=(win_w, win_h),
                     locale=locale,
                     firefox_user_prefs=firefox_user_prefs,
+                    # CRITICAL: Playwright defaults to a 1280×720 viewport on
+                    # launch_persistent_context, which means content renders
+                    # at that size INSIDE our 1920×1032 OS window. Result: a
+                    # huge empty margin around the page and page buttons
+                    # (Google "Accept all", etc.) below the visible area.
+                    # no_viewport=True tells Playwright to match viewport to
+                    # the actual OS window so the page fills the screen.
+                    no_viewport=True,
                     # We deliberately persist+replay a flat Camoufox config so the
                     # same profile gets the same UA/screen/etc on every launch.
                     # Camoufox warns about this; we acknowledge.
