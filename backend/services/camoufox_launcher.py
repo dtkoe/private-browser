@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from typing import Any
 
 from camoufox.sync_api import Camoufox
@@ -32,19 +33,80 @@ GOOGLE_HL_GL: dict[str, tuple[str, str]] = {
 
 
 def _primary_screen_size() -> tuple[int, int]:
-    """Approximate inner size of the primary monitor (minus taskbar)."""
+    """Work-area of the primary monitor in LOGICAL pixels (taskbar excluded).
+
+    We deliberately do NOT call SetProcessDPIAware: Firefox/Camoufox sizes its
+    window in logical pixels, so on a 1.25x-scaled display we want 1536×864
+    (logical), not 1920×1080 (physical) — otherwise the window goes off-screen.
+    `SystemParametersInfoW(SPI_GETWORKAREA)` returns the work-area rect
+    excluding the taskbar in the process's current DPI awareness mode (default
+    DPI-unaware = logical pixels).
+    """
     if sys.platform == "win32":
         try:
             import ctypes
+            from ctypes import wintypes
+
             user32 = ctypes.windll.user32
-            user32.SetProcessDPIAware()
+            SPI_GETWORKAREA = 0x0030
+            rect = wintypes.RECT()
+            if user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
+                w = rect.right - rect.left
+                h = rect.bottom - rect.top
+                if w > 0 and h > 0:
+                    return max(w, 1024), max(h, 700)
+            # Fallback if SPI fails: GetSystemMetrics without DPI-aware → logical
             sw = user32.GetSystemMetrics(0)
             sh = user32.GetSystemMetrics(1)
-            # Reserve ~50px for the Windows taskbar so the title bar stays visible.
-            return max(sw, 1280), max(sh - 50, 720)
+            return max(sw, 1024), max(sh - 50, 700)
         except Exception:
             pass
-    return 1600, 900
+    return 1280, 800
+
+
+def _maximize_window_for_pid(target_pid: int, timeout_s: float = 6.0) -> bool:
+    """Find Firefox/Camoufox top-level windows for `target_pid` and SW_MAXIMIZE them.
+
+    The OS-level maximize is the only reliable way to fill the work area
+    regardless of DPI scaling, multi-monitor offsets, or the size we initially
+    passed to Playwright. Polls for up to `timeout_s` because the Mozilla window
+    can take ~1-2s to appear after the process starts.
+    """
+    if sys.platform != "win32" or target_pid <= 0:
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    SW_MAXIMIZE = 3
+    EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        found: list[int] = []
+
+        def cb(hwnd: int, _: int) -> bool:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            if user32.GetParent(hwnd) != 0:
+                return True  # only top-level windows
+            cls = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(hwnd, cls, 64)
+            if cls.value != "MozillaWindowClass":
+                return True
+            p = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
+            if p.value == target_pid:
+                found.append(hwnd)
+            return True
+
+        user32.EnumWindows(EnumWindowsProc(cb), 0)
+        if found:
+            for hwnd in found:
+                user32.ShowWindow(hwnd, SW_MAXIMIZE)
+            return True
+        time.sleep(0.2)
+    return False
 
 
 class CamoufoxHandle(LaunchHandle):
@@ -149,7 +211,8 @@ class CamoufoxLauncher(Launcher):
                     # Camoufox warns about this; we acknowledge.
                     i_know_what_im_doing=True,
                 ) as browser:
-                    pid_ref.append(_extract_pid(browser))
+                    fx_pid = _extract_pid(browser)
+                    pid_ref.append(fx_pid)
                     # Land on a locale-correct Google: reuse the initial tab if
                     # Camoufox already opened one (persistent context), otherwise
                     # create a new tab. Avoids duplicate Google tabs on relaunch.
@@ -159,6 +222,17 @@ class CamoufoxLauncher(Launcher):
                         page.goto(homepage, timeout=15000)
                     except Exception:
                         pass
+                    # Force-maximize the OS-level Firefox window. window= alone
+                    # doesn't fill the screen reliably across DPI/multi-monitor
+                    # setups — ShowWindow(SW_MAXIMIZE) does. Runs in a background
+                    # thread so a slow window-appear doesn't block readiness.
+                    if fx_pid > 0:
+                        threading.Thread(
+                            target=_maximize_window_for_pid,
+                            args=(fx_pid,),
+                            name=f"maximize-{profile_id}",
+                            daemon=True,
+                        ).start()
                     ready.set()
                     while not stopper.is_set():
                         if not _browser_alive(browser):
