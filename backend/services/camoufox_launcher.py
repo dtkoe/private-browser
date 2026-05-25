@@ -1,12 +1,50 @@
 """Real launcher: spawns Camoufox in a background thread using its sync API."""
 from __future__ import annotations
 
+import sys
 import threading
 from typing import Any
 
 from camoufox.sync_api import Camoufox
 
 from backend.services.launch_manager import Launcher, LaunchError, LaunchHandle
+
+
+# Locale -> (Google `hl` UI language, `gl` country code). Google picks its UI
+# language by IP country by default, ignoring browser Accept-Language. Forcing
+# both query params guarantees the user gets a Google in their profile's locale
+# even when the (real or proxy) IP says otherwise.
+GOOGLE_HL_GL: dict[str, tuple[str, str]] = {
+    "en-US": ("en", "us"),
+    "en-GB": ("en", "uk"),
+    "ru-RU": ("ru", "ru"),
+    "de-DE": ("de", "de"),
+    "fr-FR": ("fr", "fr"),
+    "es-ES": ("es", "es"),
+    "it-IT": ("it", "it"),
+    "pt-BR": ("pt-BR", "br"),
+    "ja-JP": ("ja", "jp"),
+    "zh-CN": ("zh-CN", "cn"),
+    "uk-UA": ("uk", "ua"),
+    "pl-PL": ("pl", "pl"),
+    "tr-TR": ("tr", "tr"),
+}
+
+
+def _primary_screen_size() -> tuple[int, int]:
+    """Approximate inner size of the primary monitor (minus taskbar)."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            user32.SetProcessDPIAware()
+            sw = user32.GetSystemMetrics(0)
+            sh = user32.GetSystemMetrics(1)
+            # Reserve ~50px for the Windows taskbar so the title bar stays visible.
+            return max(sw, 1280), max(sh - 50, 720)
+        except Exception:
+            pass
+    return 1600, 900
 
 
 class CamoufoxHandle(LaunchHandle):
@@ -57,6 +95,12 @@ class CamoufoxLauncher(Launcher):
         lang_only = locale.split("-", 1)[0]
         accept_languages = ",".join(dict.fromkeys([locale, lang_only, "en"]))
 
+        # Build the homepage URL with Google's hl/gl params so the user sees a
+        # Google in their profile's locale, regardless of IP country. (Google
+        # picks UI language by IP by default, ignoring Accept-Language.)
+        hl, gl = GOOGLE_HL_GL.get(locale, ("en", "us"))
+        homepage = f"https://www.google.com/?hl={hl}&gl={gl}"
+
         # Firefox prefs that make the browser behave like a normal user of `locale`,
         # with Google as the search engine and homepage.
         firefox_user_prefs = {
@@ -64,15 +108,29 @@ class CamoufoxLauncher(Launcher):
             "browser.search.defaultenginename.US": "Google",
             "browser.urlbar.placeholderName": "Google",
             "browser.urlbar.placeholderName.private": "Google",
-            "browser.startup.homepage": "https://www.google.com/",
+            "browser.startup.homepage": homepage,
             "browser.startup.page": 1,  # open homepage on launch
             "browser.newtabpage.enabled": True,
-            "browser.newtabpage.activity-stream.default.sites": "https://www.google.com/",
+            "browser.newtabpage.activity-stream.default.sites": homepage,
             "intl.accept_languages": accept_languages,
             "general.useragent.locale": locale,
-            # Keep window manageable; user can maximise themselves
+            # Always show the tab bar even with a single tab (otherwise the
+            # window looks "stripped" / weird because Playwright's default
+            # hides the tab strip when there's only one tab).
+            "browser.tabs.tabMinWidth": 76,
             "browser.tabs.warnOnClose": False,
+            # Make the URL bar suggest history / bookmarks like a normal user's FF
+            "browser.urlbar.suggest.history": True,
+            "browser.urlbar.suggest.bookmark": True,
+            "browser.urlbar.suggest.openpage": True,
+            # Bookmarks toolbar visible on new tabs only — matches modern FF default
+            "browser.toolbars.bookmarks.visibility": "newtab",
         }
+
+        # Pick a window size that fills the user's primary monitor minus the
+        # Windows taskbar. Playwright doesn't have a real "maximized" flag for
+        # Firefox, so we drive maximization by sizing the window to ~full screen.
+        win_w, win_h = _primary_screen_size()
 
         def runner() -> None:
             try:
@@ -83,7 +141,7 @@ class CamoufoxLauncher(Launcher):
                     user_data_dir=user_data_dir,
                     persistent_context=True,
                     headless=False,
-                    window=(1280, 800),
+                    window=(win_w, win_h),
                     locale=locale,
                     firefox_user_prefs=firefox_user_prefs,
                     # We deliberately persist+replay a flat Camoufox config so the
@@ -92,13 +150,13 @@ class CamoufoxLauncher(Launcher):
                     i_know_what_im_doing=True,
                 ) as browser:
                     pid_ref.append(_extract_pid(browser))
-                    # Land on Google: reuse the initial tab if Camoufox already
-                    # opened one (persistent context); otherwise create a new tab.
-                    # Avoids duplicate Google tabs on relaunch.
+                    # Land on a locale-correct Google: reuse the initial tab if
+                    # Camoufox already opened one (persistent context), otherwise
+                    # create a new tab. Avoids duplicate Google tabs on relaunch.
                     try:
                         pages = list(getattr(browser, "pages", []) or [])
                         page = pages[0] if pages else browser.new_page()
-                        page.goto("https://www.google.com/", timeout=15000)
+                        page.goto(homepage, timeout=15000)
                     except Exception:
                         pass
                     ready.set()
