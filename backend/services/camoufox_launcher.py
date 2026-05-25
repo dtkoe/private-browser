@@ -94,19 +94,26 @@ def _list_top_mozilla_windows() -> list[tuple[int, int]]:
 
 
 def _maximize_camoufox_window(
-    target_pid: int, before_hwnds: set[int], timeout_s: float = 6.0
+    target_pid: int,
+    before_hwnds: set[int],
+    work_w: int,
+    work_h: int,
+    timeout_s: float = 5.0,
 ) -> bool:
-    """Find the Firefox/Camoufox top-level window and SW_MAXIMIZE it.
+    """Find the Firefox/Camoufox top-level window and force it to fill the screen.
+
+    Reposition+resize+maximize, in that order:
+      1. MoveWindow(hwnd, 0, 0, work_w, work_h, TRUE) — overrides the spoofed
+         `window.screenX/Y` (which could put the window off-screen on a small
+         monitor) by pulling it back to the origin of the primary work area.
+      2. ShowWindow(hwnd, SW_MAXIMIZE) — fills the work area regardless of DPI.
+      3. SetForegroundWindow + SetActiveWindow — bring it on top of pywebview
+         (otherwise the shell may stay in front, making the new browser invisible).
 
     Selection strategy (in order):
-    1. If `target_pid` > 0: match windows owned by that exact PID.
-    2. Otherwise (Playwright didn't surface a PID): pick the FIRST MozillaWindowClass
-       top-level HWND that was not present BEFORE the launch (set diff).
-
-    The OS-level maximize is the only reliable way to fill the work area
-    regardless of DPI scaling, multi-monitor offsets, or the size we initially
-    passed to Playwright. Polls for up to `timeout_s` because the Mozilla window
-    can take ~1-2s to appear after the process starts.
+      A. If `target_pid` > 0: match Mozilla windows owned by that exact PID.
+      B. Otherwise: pick the MozillaWindowClass HWND that wasn't present BEFORE
+         launch (set diff). Robust to Playwright not exposing a PID.
     """
     if sys.platform != "win32":
         return False
@@ -119,11 +126,24 @@ def _maximize_camoufox_window(
         current = _list_top_mozilla_windows()
         if target_pid > 0:
             matches = [h for h, p in current if p == target_pid]
+            if not matches:
+                # PID filter empty, fall back to set diff so a slow PID
+                # association doesn't make us miss the window entirely.
+                matches = [h for h, _ in current if h not in before_hwnds]
         else:
             matches = [h for h, _ in current if h not in before_hwnds]
         if matches:
             for hwnd in matches:
+                # Pull the window back on-screen (spoofed window.screenX/Y can
+                # be > 0 even on single-monitor setups, sending it half off the
+                # right edge).
+                user32.MoveWindow(hwnd, 0, 0, work_w, work_h, True)
                 user32.ShowWindow(hwnd, SW_MAXIMIZE)
+                # Bring on top so the user actually sees it appear.
+                try:
+                    user32.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
             return True
         time.sleep(0.2)
     return False
@@ -166,7 +186,14 @@ class CamoufoxLauncher(Launcher):
         # Strip our private metadata keys before handing to Camoufox config.
         # `timezone` is already in cf_config (no _ prefix) — it propagates to
         # Intl.DateTimeFormat via Camoufox's C++ patches.
+        # IMPORTANT: We do NOT touch `window.outerWidth/outerHeight/screenX/Y`
+        # or `screen.width/height` here — they're the spoofed JS values, randomized
+        # per profile for fingerprint masking. Camoufox intercepts the JS reads
+        # and returns these values regardless of the real OS window size, so we
+        # can let SW_MAXIMIZE (below) make the OS window fill the screen WITHOUT
+        # changing what websites see in JS.
         cf_config = {k: v for k, v in fingerprint.items() if not k.startswith("_")}
+        win_w, win_h = _primary_screen_size()
 
         # Locale: prefer profile geo, else en-US so the user sees a familiar UI
         geo = fingerprint.get("_geo") or {}
@@ -209,10 +236,6 @@ class CamoufoxLauncher(Launcher):
             "browser.toolbars.bookmarks.visibility": "newtab",
         }
 
-        # Pick a window size that fills the user's primary monitor minus the
-        # Windows taskbar. Playwright doesn't have a real "maximized" flag for
-        # Firefox, so we drive maximization by sizing the window to ~full screen.
-        win_w, win_h = _primary_screen_size()
         # Snapshot existing Mozilla windows BEFORE launch so we can identify
         # the new one when Playwright doesn't surface a PID.
         before_hwnds: set[int] = {h for h, _ in _list_top_mozilla_windows()}
@@ -245,18 +268,15 @@ class CamoufoxLauncher(Launcher):
                         page.goto(homepage, timeout=15000)
                     except Exception:
                         pass
-                    # Force-maximize the OS-level Firefox window. window= alone
-                    # doesn't fill the screen reliably across DPI/multi-monitor
-                    # setups — ShowWindow(SW_MAXIMIZE) does. Runs in a background
-                    # thread so a slow window-appear doesn't block readiness.
-                    # When PID extraction fails we fall back to the HWND that was
-                    # NOT present before launch (set diff against before_hwnds).
-                    threading.Thread(
-                        target=_maximize_camoufox_window,
-                        args=(fx_pid, before_hwnds),
-                        name=f"maximize-{profile_id}",
-                        daemon=True,
-                    ).start()
+                    # Force-position+maximize the OS-level Firefox window
+                    # SYNCHRONOUSLY before declaring "ready" so the user never
+                    # sees the brief huge-window flash that the spoofed
+                    # `window.outerWidth/Height` would otherwise produce.
+                    # Don't fail launch if maximize times out — fall through.
+                    try:
+                        _maximize_camoufox_window(fx_pid, before_hwnds, win_w, win_h)
+                    except Exception:
+                        pass
                     ready.set()
                     while not stopper.is_set():
                         if not _browser_alive(browser):
