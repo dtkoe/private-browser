@@ -54,3 +54,4 @@ installer/*.exe
 .playwright-mcp/
 # Ad-hoc Playwright screenshots in repo root
 /[0-9][0-9]-*.png
+_grab.ps1

@@ -30,6 +30,7 @@ if not IS_FROZEN:
     sys.path.insert(0, str(REPO_ROOT))
 
 from shell.camoufox_fetch import fetch_camoufox, is_camoufox_installed  # noqa: E402
+from shell.shortcut import ensure_desktop_shortcut  # noqa: E402
 
 
 def ensure_camoufox(log=print) -> None:
@@ -172,6 +173,14 @@ def main() -> None:
         os.environ["PB_DEV_NO_AUTH"] = "1"
 
     ensure_camoufox()
+
+    # First-launch Desktop shortcut (frozen bundle only — in dev mode `sys.executable`
+    # is the venv's python.exe, which would create a useless shortcut to a python).
+    if IS_FROZEN:
+        try:
+            ensure_desktop_shortcut(target_exe=Path(sys.executable))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[shell] shortcut creation failed: {exc!r}")
 
     backend_port = DEFAULT_PORT
 
