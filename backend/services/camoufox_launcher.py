@@ -64,45 +64,65 @@ def _primary_screen_size() -> tuple[int, int]:
     return 1280, 800
 
 
-def _maximize_window_for_pid(target_pid: int, timeout_s: float = 6.0) -> bool:
-    """Find Firefox/Camoufox top-level windows for `target_pid` and SW_MAXIMIZE them.
+def _list_top_mozilla_windows() -> list[tuple[int, int]]:
+    """Return a list of (hwnd, pid) for every visible top-level Mozilla window."""
+    if sys.platform != "win32":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    out: list[tuple[int, int]] = []
+
+    def cb(hwnd: int, _: int) -> bool:
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        if user32.GetParent(hwnd) != 0:
+            return True
+        cls = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, cls, 64)
+        if cls.value != "MozillaWindowClass":
+            return True
+        p = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
+        out.append((hwnd, p.value))
+        return True
+
+    user32.EnumWindows(EnumWindowsProc(cb), 0)
+    return out
+
+
+def _maximize_camoufox_window(
+    target_pid: int, before_hwnds: set[int], timeout_s: float = 6.0
+) -> bool:
+    """Find the Firefox/Camoufox top-level window and SW_MAXIMIZE it.
+
+    Selection strategy (in order):
+    1. If `target_pid` > 0: match windows owned by that exact PID.
+    2. Otherwise (Playwright didn't surface a PID): pick the FIRST MozillaWindowClass
+       top-level HWND that was not present BEFORE the launch (set diff).
 
     The OS-level maximize is the only reliable way to fill the work area
     regardless of DPI scaling, multi-monitor offsets, or the size we initially
     passed to Playwright. Polls for up to `timeout_s` because the Mozilla window
     can take ~1-2s to appear after the process starts.
     """
-    if sys.platform != "win32" or target_pid <= 0:
+    if sys.platform != "win32":
         return False
     import ctypes
-    from ctypes import wintypes
 
     user32 = ctypes.windll.user32
     SW_MAXIMIZE = 3
-    EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        found: list[int] = []
-
-        def cb(hwnd: int, _: int) -> bool:
-            if not user32.IsWindowVisible(hwnd):
-                return True
-            if user32.GetParent(hwnd) != 0:
-                return True  # only top-level windows
-            cls = ctypes.create_unicode_buffer(64)
-            user32.GetClassNameW(hwnd, cls, 64)
-            if cls.value != "MozillaWindowClass":
-                return True
-            p = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
-            if p.value == target_pid:
-                found.append(hwnd)
-            return True
-
-        user32.EnumWindows(EnumWindowsProc(cb), 0)
-        if found:
-            for hwnd in found:
+        current = _list_top_mozilla_windows()
+        if target_pid > 0:
+            matches = [h for h, p in current if p == target_pid]
+        else:
+            matches = [h for h, _ in current if h not in before_hwnds]
+        if matches:
+            for hwnd in matches:
                 user32.ShowWindow(hwnd, SW_MAXIMIZE)
             return True
         time.sleep(0.2)
@@ -193,6 +213,9 @@ class CamoufoxLauncher(Launcher):
         # Windows taskbar. Playwright doesn't have a real "maximized" flag for
         # Firefox, so we drive maximization by sizing the window to ~full screen.
         win_w, win_h = _primary_screen_size()
+        # Snapshot existing Mozilla windows BEFORE launch so we can identify
+        # the new one when Playwright doesn't surface a PID.
+        before_hwnds: set[int] = {h for h, _ in _list_top_mozilla_windows()}
 
         def runner() -> None:
             try:
@@ -226,13 +249,14 @@ class CamoufoxLauncher(Launcher):
                     # doesn't fill the screen reliably across DPI/multi-monitor
                     # setups — ShowWindow(SW_MAXIMIZE) does. Runs in a background
                     # thread so a slow window-appear doesn't block readiness.
-                    if fx_pid > 0:
-                        threading.Thread(
-                            target=_maximize_window_for_pid,
-                            args=(fx_pid,),
-                            name=f"maximize-{profile_id}",
-                            daemon=True,
-                        ).start()
+                    # When PID extraction fails we fall back to the HWND that was
+                    # NOT present before launch (set diff against before_hwnds).
+                    threading.Thread(
+                        target=_maximize_camoufox_window,
+                        args=(fx_pid, before_hwnds),
+                        name=f"maximize-{profile_id}",
+                        daemon=True,
+                    ).start()
                     ready.set()
                     while not stopper.is_set():
                         if not _browser_alive(browser):
