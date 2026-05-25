@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
+import { t, useLang } from "@/lib/i18n";
 import type { Profile, Proxy } from "@/lib/types";
 
 interface Props {
@@ -13,6 +14,7 @@ interface Props {
 const COLOR_SWATCHES = ["#5b9eff", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#06b6d4", "#94a3b8", null];
 
 export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
+  useLang();
   const [proxies, setProxies] = useState<Proxy[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -34,7 +36,7 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
   if (!profile) {
     return (
       <section className="flex flex-1 items-center justify-center text-muted">
-        Select a profile from the sidebar.
+        {t("profile.empty")}
       </section>
     );
   }
@@ -54,7 +56,7 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
 
   async function handleExport() {
     if (!profile) return;
-    const pw = window.prompt("Export password (≥12 chars):");
+    const pw = window.prompt(t("profile.export_password_prompt"));
     if (!pw) return;
     if (pw.length < 12) {
       setErr("password must be at least 12 chars");
@@ -142,7 +144,7 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
             <h2
               className="cursor-text truncate text-xl font-semibold hover:underline"
               onClick={() => { setNameDraft(profile.name); setEditingName(true); }}
-              title="Click to rename"
+              title={t("profile.click_to_rename")}
             >
               {profile.color && (
                 <span
@@ -164,7 +166,7 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
               onClick={() => action(() => api.stopProfile(profile.id))}
               className="rounded bg-yellow-700 px-3 py-1 text-sm text-white hover:bg-yellow-600 disabled:opacity-50"
             >
-              Stop
+              {t("profile.stop")}
             </button>
           ) : (
             <button
@@ -172,7 +174,7 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
               onClick={() => action(() => api.launchProfile(profile.id))}
               className="rounded bg-green-700 px-3 py-1 text-sm text-white hover:bg-green-600 disabled:opacity-50"
             >
-              ▶ Launch
+              {t("profile.launch")}
             </button>
           )}
           <button
@@ -180,32 +182,32 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
             onClick={() => action(() => api.regenerateProfile(profile.id))}
             className="rounded border border-bg-border px-3 py-1 text-sm hover:bg-bg-border/40 disabled:opacity-50"
           >
-            Regenerate fp
+            {t("profile.regenerate")}
           </button>
           <button
             disabled={busy}
             onClick={() => action(() => api.cloneProfile(profile.id, `${profile.name} (clone)`, true))}
             className="rounded border border-bg-border px-3 py-1 text-sm hover:bg-bg-border/40 disabled:opacity-50"
           >
-            Clone
+            {t("profile.clone")}
           </button>
           <button
             disabled={busy}
             onClick={handleExport}
             className="rounded border border-bg-border px-3 py-1 text-sm hover:bg-bg-border/40 disabled:opacity-50"
           >
-            Export
+            {t("profile.export")}
           </button>
           <button
             disabled={busy}
             onClick={() => {
-              if (window.confirm(`Delete profile "${profile.name}"? This removes its browser data too.`)) {
+              if (window.confirm(t("profile.delete_confirm", { name: profile.name }))) {
                 action(() => api.deleteProfile(profile.id).then(onDeleted));
               }
             }}
             className="rounded border border-red-800 px-3 py-1 text-sm text-red-400 hover:bg-red-900/30 disabled:opacity-50"
           >
-            Delete
+            {t("profile.delete")}
           </button>
         </div>
       </div>
@@ -214,27 +216,27 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
 
       <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="rounded border border-bg-border bg-bg-elevated p-4">
-          <div className="mb-2 text-xs uppercase text-muted">Notes</div>
+          <div className="mb-2 text-xs uppercase text-muted">{t("profile.notes")}</div>
           <textarea
             value={notesDraft}
             onChange={(e) => scheduleNotesCommit(e.target.value)}
             onBlur={() => commitNotes(notesDraft)}
-            placeholder="Anything to remember about this profile…"
+            placeholder={t("profile.notes_placeholder")}
             rows={3}
             className="w-full rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
           />
         </div>
         <div className="rounded border border-bg-border bg-bg-elevated p-4">
-          <div className="mb-2 text-xs uppercase text-muted">Tags (comma-separated)</div>
+          <div className="mb-2 text-xs uppercase text-muted">{t("profile.tags")}</div>
           <input
             value={tagsDraft}
             onChange={(e) => setTagsDraft(e.target.value)}
             onBlur={commitTags}
             onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-            placeholder="work, ads, dev"
+            placeholder={t("profile.tags_placeholder")}
             className="mb-3 w-full rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
           />
-          <div className="mb-1 text-xs uppercase text-muted">Color</div>
+          <div className="mb-1 text-xs uppercase text-muted">{t("profile.color")}</div>
           <div className="flex flex-wrap gap-1">
             {COLOR_SWATCHES.map((c, i) => (
               <button
@@ -254,13 +256,13 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
       </div>
 
       <div className="mb-6 rounded border border-bg-border bg-bg-elevated p-4">
-        <div className="mb-2 text-xs uppercase text-muted">Proxy</div>
+        <div className="mb-2 text-xs uppercase text-muted">{t("profile.proxy")}</div>
         <select
           value={profile.proxy_id ?? ""}
           onChange={(e) => action(() => api.bindProxy(profile.id, e.target.value || null))}
           className="w-full rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
         >
-          <option value="">No proxy (WebRTC blocked)</option>
+          <option value="">{t("profile.no_proxy")}</option>
           {proxies.map((p) => (
             <option key={p.id} value={p.id}>
               {p.label} — {p.type}://{p.host}:{p.port}
@@ -273,7 +275,7 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
       <ExtensionsBlock profileId={profile.id} />
 
       <details className="rounded border border-bg-border bg-bg-elevated p-4">
-        <summary className="cursor-pointer text-xs uppercase text-muted">Fingerprint (raw)</summary>
+        <summary className="cursor-pointer text-xs uppercase text-muted">{t("profile.fingerprint_raw")}</summary>
         <pre className="mt-3 overflow-x-auto text-xs">{JSON.stringify(fp, null, 2)}</pre>
       </details>
     </section>
@@ -281,6 +283,7 @@ export function ProfileDetail({ profile, onChanged, onDeleted }: Props) {
 }
 
 function ExtensionsBlock({ profileId }: { profileId: string }) {
+  useLang();
   const [exts, setExts] = useState<Array<{ id: string; name: string; version: string; filename: string }>>([]);
   const [err, setErr] = useState<string | null>(null);
 
@@ -310,15 +313,15 @@ function ExtensionsBlock({ profileId }: { profileId: string }) {
   return (
     <div className="mb-6 rounded border border-bg-border bg-bg-elevated p-4">
       <div className="mb-3 flex items-center justify-between">
-        <span className="text-xs uppercase text-muted">Extensions ({exts.length})</span>
+        <span className="text-xs uppercase text-muted">{t("profile.extensions")} ({exts.length})</span>
         <label className="cursor-pointer rounded border border-bg-border px-2 py-0.5 text-xs hover:bg-bg-border/40">
-          + Install .xpi
+          {t("profile.install_xpi")}
           <input type="file" accept=".xpi" hidden onChange={onPick} />
         </label>
       </div>
       {err && <div className="mb-2 text-xs text-red-400">{err}</div>}
       {exts.length === 0 ? (
-        <div className="text-sm text-muted">No extensions installed.</div>
+        <div className="text-sm text-muted">{t("profile.no_extensions")}</div>
       ) : (
         <ul className="text-sm">
           {exts.map((e) => (
@@ -336,7 +339,7 @@ function ExtensionsBlock({ profileId }: { profileId: string }) {
                 }}
                 className="text-xs text-red-400 hover:underline"
               >
-                Remove
+                {t("profile.remove")}
               </button>
             </li>
           ))}

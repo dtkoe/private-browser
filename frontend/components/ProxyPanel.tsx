@@ -2,9 +2,11 @@
 import { useEffect, useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
+import { t, useLang } from "@/lib/i18n";
 import type { Proxy, ProxyType } from "@/lib/types";
 
 export function ProxyPanel() {
+  useLang();
   const [proxies, setProxies] = useState<Proxy[]>([]);
   const [form, setForm] = useState<{ label: string; type: ProxyType; host: string; port: string }>({
     label: "",
@@ -73,7 +75,7 @@ export function ProxyPanel() {
   }
 
   async function remove(id: string) {
-    if (!confirm("Delete proxy?")) return;
+    if (!confirm(t("proxy.delete_confirm"))) return;
     setBusy(true);
     try {
       await api.deleteProxy(id);
@@ -85,13 +87,13 @@ export function ProxyPanel() {
 
   return (
     <section className="flex-1 overflow-y-auto p-6">
-      <h2 className="mb-4 text-xl font-semibold">Proxies ({proxies.length})</h2>
+      <h2 className="mb-4 text-xl font-semibold">{t("proxy.title")} ({proxies.length})</h2>
 
       <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="rounded border border-bg-border bg-bg-elevated p-4">
-          <div className="mb-3 text-xs uppercase text-muted">Add one</div>
+          <div className="mb-3 text-xs uppercase text-muted">{t("proxy.add_one")}</div>
           <input
-            placeholder="Label (optional)"
+            placeholder={t("proxy.label_optional")}
             value={form.label}
             onChange={(e) => setForm({ ...form, label: e.target.value })}
             className="mb-2 w-full rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
@@ -107,13 +109,13 @@ export function ProxyPanel() {
               <option value="socks5">SOCKS5</option>
             </select>
             <input
-              placeholder="host"
+              placeholder={t("proxy.host")}
               value={form.host}
               onChange={(e) => setForm({ ...form, host: e.target.value })}
               className="flex-1 rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
             />
             <input
-              placeholder="port"
+              placeholder={t("proxy.port")}
               value={form.port}
               onChange={(e) => setForm({ ...form, port: e.target.value })}
               className="w-20 rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
@@ -124,13 +126,13 @@ export function ProxyPanel() {
             onClick={add}
             className="rounded bg-accent px-3 py-1 text-sm text-white hover:bg-accent-hover disabled:opacity-50"
           >
-            Add proxy
+            {t("proxy.add_button")}
           </button>
         </div>
 
         <div className="rounded border border-bg-border bg-bg-elevated p-4">
           <div className="mb-3 text-xs uppercase text-muted">
-            Batch import (one per line: host:port or host:port:user:pass)
+            {t("proxy.batch_import")}
           </div>
           <textarea
             value={batchText}
@@ -143,7 +145,7 @@ export function ProxyPanel() {
             onClick={batch}
             className="rounded bg-accent px-3 py-1 text-sm text-white hover:bg-accent-hover disabled:opacity-50"
           >
-            Import
+            {t("proxy.import")}
           </button>
         </div>
       </div>
@@ -153,10 +155,10 @@ export function ProxyPanel() {
       <table className="w-full overflow-hidden rounded border border-bg-border">
         <thead className="bg-bg-elevated text-left text-xs uppercase text-muted">
           <tr>
-            <th className="px-3 py-2">Label</th>
-            <th className="px-3 py-2">Endpoint</th>
-            <th className="px-3 py-2">Last check</th>
-            <th className="px-3 py-2">IP / Geo</th>
+            <th className="px-3 py-2">{t("proxy.col_label")}</th>
+            <th className="px-3 py-2">{t("proxy.col_endpoint")}</th>
+            <th className="px-3 py-2">{t("proxy.col_last_check")}</th>
+            <th className="px-3 py-2">{t("proxy.col_ip_geo")}</th>
             <th className="px-3 py-2"></th>
           </tr>
         </thead>
@@ -185,7 +187,7 @@ export function ProxyPanel() {
                     {p.last_check_ok ? "OK" : "FAIL"} · {p.last_latency_ms}ms
                   </span>
                 ) : (
-                  <span className="text-muted">never</span>
+                  <span className="text-muted">{t("proxy.last_check_never")}</span>
                 )}
               </td>
               <td className="px-3 py-2 text-xs text-muted">
@@ -197,14 +199,14 @@ export function ProxyPanel() {
                   disabled={busy}
                   className="mr-2 rounded border border-bg-border px-2 py-0.5 text-xs hover:bg-bg-border/40 disabled:opacity-50"
                 >
-                  Check
+                  {t("proxy.check")}
                 </button>
                 <button
                   onClick={() => remove(p.id)}
                   disabled={busy}
                   className="rounded border border-red-800 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900/30 disabled:opacity-50"
                 >
-                  Delete
+                  {t("proxy.delete")}
                 </button>
               </td>
             </tr>
@@ -212,7 +214,7 @@ export function ProxyPanel() {
           {proxies.length === 0 && (
             <tr>
               <td colSpan={5} className="px-3 py-6 text-center text-sm text-muted">
-                No proxies. Add some above.
+                {t("proxy.empty")}
               </td>
             </tr>
           )}

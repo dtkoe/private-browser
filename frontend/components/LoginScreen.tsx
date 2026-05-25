@@ -2,12 +2,14 @@
 import { useEffect, useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
+import { t, useLang } from "@/lib/i18n";
 
 interface Props {
   onUnlocked: () => void;
 }
 
 export function LoginScreen({ onUnlocked }: Props) {
+  useLang();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -33,8 +35,8 @@ export function LoginScreen({ onUnlocked }: Props) {
     setBusy(true);
     try {
       if (needsInit) {
-        if (password.length < 12) throw new Error("password must be at least 12 characters");
-        if (password !== confirm) throw new Error("passwords don't match");
+        if (password.length < 12) throw new Error(t("login.err_min_length"));
+        if (password !== confirm) throw new Error(t("login.err_mismatch"));
         try {
           await api.initialize(password);
         } catch (e: any) {
@@ -59,17 +61,15 @@ export function LoginScreen({ onUnlocked }: Props) {
   }
 
   if (needsInit === null) {
-    return <div className="flex h-screen items-center justify-center text-muted">Loading…</div>;
+    return <div className="flex h-screen items-center justify-center text-muted">{t("login.loading")}</div>;
   }
 
   return (
     <div className="flex h-screen items-center justify-center">
       <div className="w-[400px] rounded-lg border border-bg-border bg-bg-elevated p-8 shadow-2xl">
-        <h1 className="mb-2 text-2xl font-semibold">Genesis Browser</h1>
+        <h1 className="mb-2 text-2xl font-semibold">{t("login.title")}</h1>
         <p className="mb-6 text-sm text-muted">
-          {needsInit
-            ? "Create a master password (≥12 chars). This encrypts your data; there is no recovery if lost."
-            : "Enter your master password to unlock."}
+          {needsInit ? t("login.create_hint") : t("login.unlock_hint")}
         </p>
         <input
           type="password"
@@ -79,7 +79,7 @@ export function LoginScreen({ onUnlocked }: Props) {
           onKeyDown={(e) => {
             if (e.key === "Enter") handle();
           }}
-          placeholder="Master password"
+          placeholder={t("login.password_placeholder")}
           className="mb-3 w-full rounded border border-bg-border bg-bg px-3 py-2 outline-none focus:border-accent"
         />
         {needsInit && (
@@ -90,7 +90,7 @@ export function LoginScreen({ onUnlocked }: Props) {
             onKeyDown={(e) => {
               if (e.key === "Enter") handle();
             }}
-            placeholder="Confirm password"
+            placeholder={t("login.confirm_placeholder")}
             className="mb-3 w-full rounded border border-bg-border bg-bg px-3 py-2 outline-none focus:border-accent"
           />
         )}
@@ -100,7 +100,7 @@ export function LoginScreen({ onUnlocked }: Props) {
           disabled={busy}
           className="w-full rounded bg-accent px-3 py-2 font-medium text-white hover:bg-accent-hover disabled:opacity-50"
         >
-          {busy ? "Working…" : needsInit ? "Create & unlock" : "Unlock"}
+          {busy ? t("login.working") : needsInit ? t("login.create_button") : t("login.unlock_button")}
         </button>
       </div>
     </div>

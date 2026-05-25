@@ -2,6 +2,7 @@
 import { useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
+import { t, useLang } from "@/lib/i18n";
 import type { Profile } from "@/lib/types";
 
 interface Props {
@@ -25,6 +26,7 @@ export function Sidebar({
   onClearSelection,
   onBulkDeleted,
 }: Props) {
+  useLang();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [targetOs, setTargetOs] = useState<"" | "windows" | "macos" | "linux">("");
@@ -53,7 +55,7 @@ export function Sidebar({
   async function bulkDelete() {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
-    if (!window.confirm(`Delete ${ids.length} profile${ids.length === 1 ? "" : "s"}? Cannot be undone.`)) {
+    if (!window.confirm(t("sidebar.bulk_delete_confirm", { n: ids.length }))) {
       return;
     }
     try {
@@ -73,13 +75,13 @@ export function Sidebar({
     <aside className="flex w-72 flex-col border-r border-bg-border bg-bg-elevated">
       <div className="flex items-center justify-between border-b border-bg-border p-3">
         <span className="text-xs uppercase tracking-wide text-muted">
-          Profiles ({profiles.length})
+          {t("sidebar.profiles")} ({profiles.length})
         </span>
         <button
           className="rounded bg-accent px-2 py-0.5 text-xs text-white hover:bg-accent-hover"
           onClick={() => setCreating(true)}
         >
-          + New
+          {t("sidebar.new")}
         </button>
       </div>
       {profiles.length > 0 && (
@@ -87,20 +89,20 @@ export function Sidebar({
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter…"
+            placeholder={t("sidebar.filter")}
             className="w-full rounded border border-bg-border bg-bg px-2 py-1 text-xs outline-none focus:border-accent"
           />
         </div>
       )}
       {selectedIds.size > 0 && (
         <div className="flex items-center justify-between border-b border-bg-border bg-accent/10 px-3 py-2 text-xs">
-          <span>{selectedIds.size} selected</span>
+          <span>{selectedIds.size} {t("sidebar.selected_n")}</span>
           <div className="flex gap-2">
             <button onClick={bulkDelete} className="text-red-400 hover:underline">
-              Delete
+              {t("sidebar.delete")}
             </button>
             <button onClick={onClearSelection} className="text-muted hover:text-white">
-              Clear
+              {t("sidebar.clear")}
             </button>
           </div>
         </div>
@@ -109,7 +111,7 @@ export function Sidebar({
         <div className="border-b border-bg-border p-3">
           <input
             autoFocus
-            placeholder="Name"
+            placeholder={t("sidebar.name_placeholder")}
             value={name}
             onChange={(e) => setName(e.target.value)}
             className="mb-2 w-full rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
@@ -119,7 +121,7 @@ export function Sidebar({
             onChange={(e) => setTargetOs(e.target.value as any)}
             className="mb-2 w-full rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
           >
-            <option value="">Random OS</option>
+            <option value="">{t("sidebar.random_os")}</option>
             <option value="windows">Windows</option>
             <option value="macos">macOS</option>
             <option value="linux">Linux</option>
@@ -127,7 +129,7 @@ export function Sidebar({
           <select
             value={locale}
             onChange={(e) => setLocale(e.target.value)}
-            title="Language & timezone the profile will pretend to use"
+            title={t("sidebar.locale_label")}
             className="mb-2 w-full rounded border border-bg-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
           >
             <option value="en-US">English (US) — America/New_York</option>
@@ -147,13 +149,13 @@ export function Sidebar({
           {err && <div className="mb-2 text-xs text-red-400">{err}</div>}
           <div className="flex gap-2">
             <button className="flex-1 rounded bg-accent px-2 py-1 text-xs text-white" onClick={create}>
-              Create
+              {t("sidebar.create")}
             </button>
             <button
               className="flex-1 rounded border border-bg-border px-2 py-1 text-xs"
               onClick={() => setCreating(false)}
             >
-              Cancel
+              {t("sidebar.cancel")}
             </button>
           </div>
         </div>
@@ -196,10 +198,10 @@ export function Sidebar({
           );
         })}
         {profiles.length === 0 && (
-          <li className="p-4 text-center text-sm text-muted">No profiles yet</li>
+          <li className="p-4 text-center text-sm text-muted">{t("sidebar.no_profiles")}</li>
         )}
         {profiles.length > 0 && filtered.length === 0 && (
-          <li className="p-4 text-center text-sm text-muted">No matches for "{filter}"</li>
+          <li className="p-4 text-center text-sm text-muted">{t("sidebar.no_matches")} "{filter}"</li>
         )}
       </ul>
     </aside>

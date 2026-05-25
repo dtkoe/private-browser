@@ -7,12 +7,14 @@ import { ProxyPanel } from "@/components/ProxyPanel";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { Sidebar } from "@/components/Sidebar";
 import { api } from "@/lib/api";
+import { t, useLang } from "@/lib/i18n";
 import type { Profile } from "@/lib/types";
 import { subscribeEvents } from "@/lib/ws";
 
 type Tab = "profiles" | "proxies" | "settings";
 
 export default function Page() {
+  useLang(); // re-render on language toggle
   const [unlocked, setUnlocked] = useState(false);
   const [tab, setTab] = useState<Tab>("profiles");
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -74,22 +76,22 @@ export default function Page() {
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-bg-border bg-bg-elevated px-4 py-2">
         <div className="flex items-center gap-2">
           <span className="font-semibold">Genesis Browser</span>
-          <span className="text-xs text-muted">v0.7.0</span>
+          <span className="text-xs text-muted">{t("brand.version")}</span>
         </div>
         <nav className="flex gap-1">
           <TabBtn current={tab} value="profiles" onClick={() => setTab("profiles")}>
-            Profiles
+            {t("nav.profiles")}
           </TabBtn>
           <TabBtn current={tab} value="proxies" onClick={() => setTab("proxies")}>
-            Proxies
+            {t("nav.proxies")}
           </TabBtn>
           <TabBtn current={tab} value="settings" onClick={() => setTab("settings")}>
-            Settings
+            {t("nav.settings")}
           </TabBtn>
         </nav>
         <div className="flex items-center gap-2">
           <label className="cursor-pointer rounded border border-white/20 bg-bg/60 px-3 py-1.5 text-xs font-medium text-white/90 hover:border-white/40 hover:bg-bg/80">
-            Import
+            {t("header.import")}
             <input
               type="file"
               accept=".pbprof"
@@ -97,7 +99,7 @@ export default function Page() {
               onChange={async (e) => {
                 const f = e.target.files?.[0];
                 if (!f) return;
-                const pw = window.prompt("Import password:");
+                const pw = window.prompt(t("import.password_prompt"));
                 if (!pw) {
                   e.target.value = "";
                   return;
@@ -119,7 +121,7 @@ export default function Page() {
               setUnlocked(false);
             }}
           >
-            Lock
+            {t("header.lock")}
           </button>
         </div>
       </header>
