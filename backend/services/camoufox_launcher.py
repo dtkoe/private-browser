@@ -14,6 +14,21 @@ from backend.services.launch_manager import Launcher, LaunchError, LaunchHandle
 # language by IP country by default, ignoring browser Accept-Language. Forcing
 # both query params guarantees the user gets a Google in their profile's locale
 # even when the (real or proxy) IP says otherwise.
+# Persisted fingerprint may include OS-window-shaped keys (Camoufox/Browserforge
+# generates them at fingerprint-time from a random plausible monitor). They MUST
+# be stripped before launch — see comment in CamoufoxLauncher.launch.
+_WINDOW_OVERRIDE_KEYS = frozenset(
+    {
+        "window.outerWidth",
+        "window.outerHeight",
+        "window.innerWidth",
+        "window.innerHeight",
+        "window.screenX",
+        "window.screenY",
+    }
+)
+
+
 GOOGLE_HL_GL: dict[str, tuple[str, str]] = {
     "en-US": ("en", "us"),
     "en-GB": ("en", "uk"),
@@ -195,23 +210,27 @@ class CamoufoxLauncher(Launcher):
         ready = threading.Event()
         err_ref: list[BaseException] = []
 
-        cf_config = {k: v for k, v in fingerprint.items() if not k.startswith("_")}
+        # CRITICAL (user 2026-05-27): drop `window.outerWidth/Height/screenX/Y`
+        # from the persisted fingerprint before passing it to Camoufox. These
+        # are GENERATED at fingerprint-time from a random plausible monitor
+        # (e.g. 1920×1037 for a "full HD" persona) and would otherwise leak
+        # into cf_config. Camoufox's internal merge then keeps the user-set
+        # key over the `window=(w,h)` derived value, so Firefox creates the
+        # OS window at whatever the persisted fingerprint said — on a
+        # 125 %-scaled display, 1920 CSS becomes 2400 PHYSICAL, blowing past
+        # the screen edge. We re-derive the right values from the real
+        # monitor below.
+        cf_config = {
+            k: v
+            for k, v in fingerprint.items()
+            if not k.startswith("_") and k not in _WINDOW_OVERRIDE_KEYS
+        }
 
-        # Sizing strategy (user 2026-05-27): we spoof `screen.*` to the real
-        # monitor so JS fingerprints stay plausible (a 1.25x-scaled 1920×1080
-        # display reports screen.width=1536). For `window.outerWidth/Height`
-        # and `window.screenX/Y` we DO NOT inject overrides — a static spoof
-        # makes Camoufox/Firefox draw chrome (min/max/close, +, extensions)
-        # for that fixed width, but the OS window's real width includes the
-        # ~7px resize-border padding that SW_MAXIMIZE adds. Result: chrome
-        # right edge (and its buttons) ends up beyond the screen edge, and
-        # resizing the window doesn't reflow the chrome.
-        #
-        # Instead we just pass `window=(work_w, work_h)` to Camoufox below.
-        # Camoufox derives outerWidth/Height from that, opens the OS window
-        # at that size, then SW_MAXIMIZE expands to the work area — chrome
-        # buttons sit at the real window's right edge (visible), and
-        # resizing reflows like a normal Firefox.
+        # Re-spoof screen.* to the user's REAL monitor so JS fingerprints stay
+        # plausible (a 1.25x-scaled 1920×1080 display reports screen.width=1536).
+        # window.outer*, window.screen* and friends are intentionally NOT set —
+        # Camoufox derives them from `window=(work_w, work_h)` and Firefox keeps
+        # them in sync with the real OS window, so chrome reflows on resize.
         screen_w, screen_h, win_w, win_h = _primary_screen_metrics()
         cf_config["screen.width"] = screen_w
         cf_config["screen.height"] = screen_h
