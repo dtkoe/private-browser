@@ -10,7 +10,6 @@ from camoufox.sync_api import Camoufox
 
 from backend.services.launch_manager import Launcher, LaunchError, LaunchHandle
 
-
 # Locale -> (Google `hl` UI language, `gl` country code). Google picks its UI
 # language by IP country by default, ignoring browser Accept-Language. Forcing
 # both query params guarantees the user gets a Google in their profile's locale
@@ -34,22 +33,39 @@ GOOGLE_HL_GL: dict[str, tuple[str, str]] = {
 
 def _primary_screen_metrics() -> tuple[int, int, int, int]:
     """Return (screen_w, screen_h, work_w, work_h) of the primary monitor in
-    LOGICAL pixels (the units Firefox sizes its chrome in).
+    CSS/LOGICAL pixels (the units Firefox sizes its chrome in).
 
-    - `screen_w/h` = full monitor size (matches navigator/screen.width/height a
-      real user would have on this machine — including the taskbar strip).
-    - `work_w/h`   = work area, taskbar excluded — the size a maximized window
-      occupies, matching window.outerWidth/Height and screen.availWidth/Height.
+    CRITICAL: the answer must NOT depend on whether the calling process is
+    DPI-aware. In dev mode this Python process is DPI-unaware → GetSystemMetrics
+    already gives us CSS pixels. In the frozen/bundled build pywebview's WebView2
+    backend flips the process to per-monitor-v2 DPI awareness → GetSystemMetrics
+    would suddenly return PHYSICAL pixels. We'd then pass e.g. window=(1920,1032)
+    to Camoufox, Camoufox treats that as CSS pixels, Firefox creates a 1.25×
+    larger OS window (≈2400×1290 physical on a 125% display) — chrome and
+    extensions get drawn off-screen, "twice the size of the monitor" as the
+    user reported on 2026-05-27.
 
-    We deliberately do NOT call SetProcessDPIAware: Firefox uses logical pixels,
-    so on a 1.25x-scaled 1920×1080 display we want 1536×864, not 1920×1080.
+    Fix: pin this thread to DPI-UNAWARE while measuring. SetThreadDpiAwarenessContext
+    is per-thread and per-call; the process awareness is left alone.
     """
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            from ctypes import wintypes
+    if sys.platform != "win32":
+        return 1366, 768, 1366, 720
+    try:
+        import ctypes
+        from ctypes import wintypes
 
-            user32 = ctypes.windll.user32
+        user32 = ctypes.windll.user32
+        # DPI_AWARENESS_CONTEXT_UNAWARE = (HANDLE)-1
+        DPI_UNAWARE = ctypes.c_void_p(-1)
+        prev_ctx = None
+        try:
+            user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+            user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+            prev_ctx = user32.SetThreadDpiAwarenessContext(DPI_UNAWARE)
+        except (AttributeError, OSError):
+            prev_ctx = None  # pre-Win10-1703; assume already-unaware behavior
+
+        try:
             sw = user32.GetSystemMetrics(0)  # SM_CXSCREEN — full primary
             sh = user32.GetSystemMetrics(1)  # SM_CYSCREEN
             SPI_GETWORKAREA = 0x0030
@@ -59,10 +75,16 @@ def _primary_screen_metrics() -> tuple[int, int, int, int]:
                 wh = max(rect.bottom - rect.top, 700)
             else:
                 ww, wh = sw, max(sh - 48, 700)
-            return max(sw, 1024), max(sh, 768), ww, wh
-        except Exception:
-            pass
-    return 1366, 768, 1366, 720
+        finally:
+            if prev_ctx is not None:
+                try:
+                    user32.SetThreadDpiAwarenessContext(prev_ctx)
+                except OSError:
+                    pass
+
+        return max(sw, 1024), max(sh, 768), ww, wh
+    except Exception:
+        return 1366, 768, 1366, 720
 
 
 def _primary_screen_size() -> tuple[int, int]:
@@ -103,19 +125,9 @@ def _list_top_mozilla_windows() -> list[tuple[int, int]]:
 def _maximize_camoufox_window(
     target_pid: int,
     before_hwnds: set[int],
-    work_w: int,
-    work_h: int,
     timeout_s: float = 5.0,
 ) -> bool:
-    """Find the Firefox/Camoufox top-level window and force it to fill the screen.
-
-    Reposition+resize+maximize, in that order:
-      1. MoveWindow(hwnd, 0, 0, work_w, work_h, TRUE) — overrides the spoofed
-         `window.screenX/Y` (which could put the window off-screen on a small
-         monitor) by pulling it back to the origin of the primary work area.
-      2. ShowWindow(hwnd, SW_MAXIMIZE) — fills the work area regardless of DPI.
-      3. SetForegroundWindow + SetActiveWindow — bring it on top of pywebview
-         (otherwise the shell may stay in front, making the new browser invisible).
+    """Find the Firefox/Camoufox top-level window and SW_MAXIMIZE it.
 
     Selection strategy (in order):
       A. If `target_pid` > 0: match Mozilla windows owned by that exact PID.
@@ -134,19 +146,12 @@ def _maximize_camoufox_window(
         if target_pid > 0:
             matches = [h for h, p in current if p == target_pid]
             if not matches:
-                # PID filter empty, fall back to set diff so a slow PID
-                # association doesn't make us miss the window entirely.
                 matches = [h for h, _ in current if h not in before_hwnds]
         else:
             matches = [h for h, _ in current if h not in before_hwnds]
         if matches:
             for hwnd in matches:
-                # Pull the window back on-screen (spoofed window.screenX/Y can
-                # be > 0 even on single-monitor setups, sending it half off the
-                # right edge).
-                user32.MoveWindow(hwnd, 0, 0, work_w, work_h, True)
                 user32.ShowWindow(hwnd, SW_MAXIMIZE)
-                # Bring on top so the user actually sees it appear.
                 try:
                     user32.SetForegroundWindow(hwnd)
                 except Exception:
@@ -192,26 +197,26 @@ class CamoufoxLauncher(Launcher):
 
         cf_config = {k: v for k, v in fingerprint.items() if not k.startswith("_")}
 
-        # KEY INSIGHT (user 2026-05-25): Firefox renders its chrome (URL bar,
-        # tab strip, buttons) using the SPOOFED window.outerWidth/Height, not
-        # the real OS window size. If those values don't match the actual OS
-        # window, the chrome lays out wrong — buttons clip / new-tab button
-        # goes off-screen.
+        # Sizing strategy (user 2026-05-27): we spoof `screen.*` to the real
+        # monitor so JS fingerprints stay plausible (a 1.25x-scaled 1920×1080
+        # display reports screen.width=1536). For `window.outerWidth/Height`
+        # and `window.screenX/Y` we DO NOT inject overrides — a static spoof
+        # makes Camoufox/Firefox draw chrome (min/max/close, +, extensions)
+        # for that fixed width, but the OS window's real width includes the
+        # ~7px resize-border padding that SW_MAXIMIZE adds. Result: chrome
+        # right edge (and its buttons) ends up beyond the screen edge, and
+        # resizing the window doesn't reflow the chrome.
         #
-        # We resolve this by spoofing `screen.*` and `window.outer*` to the
-        # USER's REAL screen, then sizing the OS window to match. Every user
-        # gets a plausibly-shaped fingerprint (their real monitor dimensions),
-        # the chrome renders inside the visible window, and SW_MAXIMIZE just
-        # works because the spoofed values agree with the OS reality.
+        # Instead we just pass `window=(work_w, work_h)` to Camoufox below.
+        # Camoufox derives outerWidth/Height from that, opens the OS window
+        # at that size, then SW_MAXIMIZE expands to the work area — chrome
+        # buttons sit at the real window's right edge (visible), and
+        # resizing reflows like a normal Firefox.
         screen_w, screen_h, win_w, win_h = _primary_screen_metrics()
         cf_config["screen.width"] = screen_w
         cf_config["screen.height"] = screen_h
         cf_config["screen.availWidth"] = win_w
         cf_config["screen.availHeight"] = win_h
-        cf_config["window.outerWidth"] = win_w
-        cf_config["window.outerHeight"] = win_h
-        cf_config["window.screenX"] = 0
-        cf_config["window.screenY"] = 0
 
         # Locale: prefer profile geo, else en-US so the user sees a familiar UI
         geo = fingerprint.get("_geo") or {}
@@ -300,7 +305,7 @@ class CamoufoxLauncher(Launcher):
                     # `window.outerWidth/Height` would otherwise produce.
                     # Don't fail launch if maximize times out — fall through.
                     try:
-                        _maximize_camoufox_window(fx_pid, before_hwnds, win_w, win_h)
+                        _maximize_camoufox_window(fx_pid, before_hwnds)
                     except Exception:
                         pass
                     ready.set()

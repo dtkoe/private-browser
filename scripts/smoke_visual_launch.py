@@ -27,6 +27,39 @@ def take_desktop_screenshot(out: Path) -> None:
     subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True, capture_output=True)
 
 
+def force_camoufox_topmost() -> None:
+    """Bring all MozillaWindowClass windows to the top via SetWindowPos(HWND_TOPMOST)
+    so the desktop screenshot captures Camoufox instead of whatever is in the
+    foreground. We toggle topmost on then off so the window doesn't get stuck
+    above other apps after the screenshot."""
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    HWND_TOPMOST = -1
+    HWND_NOTOPMOST = -2
+    SWP_NOMOVE = 0x0002
+    SWP_NOSIZE = 0x0001
+    SWP_SHOWWINDOW = 0x0040
+    EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    hwnds: list[int] = []
+
+    def cb(hwnd, _):
+        if u.IsWindowVisible(hwnd) and u.GetParent(hwnd) == 0:
+            cls = ctypes.create_unicode_buffer(64)
+            u.GetClassNameW(hwnd, cls, 64)
+            if cls.value == "MozillaWindowClass":
+                hwnds.append(hwnd)
+        return True
+
+    u.EnumWindows(EnumWindowsProc(cb), 0)
+    flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+    for hw in hwnds:
+        u.SetWindowPos(hw, HWND_TOPMOST, 0, 0, 0, 0, flags)
+    time.sleep(0.4)
+    for hw in hwnds:
+        u.SetWindowPos(hw, HWND_NOTOPMOST, 0, 0, 0, 0, flags)
+
+
 def main() -> None:
     locale = sys.argv[1] if len(sys.argv) > 1 else "en-US"
     out_name = sys.argv[2] if len(sys.argv) > 2 else f"camoufox-{locale}.png"
@@ -39,6 +72,8 @@ def main() -> None:
     h = mgr.launch(profile_id=f"smoke-{locale}", user_data_dir=str(udd), fingerprint=fp, proxy=None)
     print(f"PID={h.pid}, alive={h.is_alive()}")
     time.sleep(6)  # give Google time to load
+    force_camoufox_topmost()
+    time.sleep(0.5)
     take_desktop_screenshot(out)
     print(f"screenshot -> {out}")
     mgr.stop(f"smoke-{locale}")
