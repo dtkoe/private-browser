@@ -205,6 +205,13 @@ def main() -> None:
                         bad_frames.append(f"OVERSIZED {w}x{h} at t={t:.2f}s")
                     if r.left >= sw or r.top >= sh or r.right <= 0 or r.bottom <= 0:
                         bad_frames.append(f"FULLY OFF-SCREEN at t={t:.2f}s")
+                    # Non-maximized frames must sit at the work-area origin;
+                    # a restored stale position (e.g. screenX=-664) is the
+                    # "всё съезжает" the user reported on 2026-08-10.
+                    if not zoomed and (r.left < -30 or r.top < -30):
+                        bad_frames.append(
+                            f"MISPLACED non-zoomed ({r.left},{r.top}) at t={t:.2f}s"
+                        )
                     state["last"] = cur
                 time.sleep(0.03)
 
@@ -221,9 +228,15 @@ def main() -> None:
             f"final state not maximized: {state['last']}"
         )
         assert not bad_frames, f"bad geometry frames: {bad_frames}"
+        assert state["t_zoomed"] is not None, "window never maximized"
+        zoom_lag = state["t_zoomed"] - state["t_first"]
+        assert zoom_lag <= 1.5, (
+            f"maximize lagged {zoom_lag:.2f}s behind the first frame — the "
+            "watcher must maximize immediately, not after Playwright connects"
+        )
         print(
             f"[verify] OK: window appeared t={state['t_first']:.2f}s,"
-            f" maximized t={state['t_zoomed']:.2f}s"
+            f" maximized t={state['t_zoomed']:.2f}s (lag {zoom_lag:.2f}s)"
         )
 
         # Screenshot the Camoufox HWND itself (PrintWindow → correct even when

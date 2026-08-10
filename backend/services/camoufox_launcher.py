@@ -137,61 +137,108 @@ def _list_top_mozilla_windows() -> list[tuple[int, int]]:
     return out
 
 
-def _maximize_camoufox_window(
-    target_pid: int,
+def _window_watcher(
     before_hwnds: set[int],
-    timeout_s: float = 5.0,
-) -> bool:
-    """Find the Firefox/Camoufox top-level window and SW_MAXIMIZE it.
-
-    Selection strategy (in order):
-      A. If `target_pid` > 0: match Mozilla windows owned by that exact PID.
-      B. Otherwise: pick the MozillaWindowClass HWND that wasn't present BEFORE
-         launch (set diff). Robust to Playwright not exposing a PID.
+    state: dict,
+    stop_evt: threading.Event,
+    appear_timeout_s: float = 30.0,
+    enforce_s: float = 3.0,
+) -> None:
+    """Maximize the new Camoufox window the moment it appears — independent of
+    Playwright. The OS window exists seconds BEFORE Camoufox.__enter__ returns
+    (juggler handshake takes 4-16s on aged profiles, sometimes hangs), so any
+    maximize that waits for Playwright leaves the user staring at a non-maximized
+    window. This watcher runs from launch t0, maximizes at the first frame, and
+    re-asserts for a few seconds in case Firefox re-applies its own sizing.
+    Also records the window's OS pid so a hung launch can be killed.
     """
     if sys.platform != "win32":
-        return False
+        return
     import ctypes
 
     user32 = ctypes.windll.user32
     SW_MAXIMIZE = 3
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        current = _list_top_mozilla_windows()
-        if target_pid > 0:
-            matches = [h for h, p in current if p == target_pid]
-            if not matches:
-                matches = [h for h, _ in current if h not in before_hwnds]
+    hwnd = None
+    deadline = time.monotonic() + appear_timeout_s
+    while not stop_evt.is_set() and time.monotonic() < deadline:
+        new = [(h, p) for h, p in _list_top_mozilla_windows() if h not in before_hwnds]
+        if new:
+            hwnd, state["pid"] = new[0]
+            state["hwnd"] = hwnd
+            break
+        stop_evt.wait(0.05)
+    if hwnd is None:
+        return
+    user32.ShowWindow(hwnd, SW_MAXIMIZE)
+    try:
+        user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+    end = time.monotonic() + enforce_s
+    while not stop_evt.is_set() and time.monotonic() < end:
+        if not user32.IsZoomed(hwnd):
+            user32.ShowWindow(hwnd, SW_MAXIMIZE)
+        stop_evt.wait(0.2)
+
+
+def _kill_pid_tree(pid: int) -> None:
+    if pid <= 0:
+        return
+    try:
+        if sys.platform == "win32":
+            import subprocess
+
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+            )
         else:
-            matches = [h for h, _ in current if h not in before_hwnds]
-        if matches:
-            for hwnd in matches:
-                user32.ShowWindow(hwnd, SW_MAXIMIZE)
-                try:
-                    user32.SetForegroundWindow(hwnd)
-                except Exception:
-                    pass
-            return True
-        time.sleep(0.2)
-    return False
+            import os
+            import signal
+
+            os.kill(pid, signal.SIGKILL)
+    except Exception:
+        pass
 
 
 class CamoufoxHandle(LaunchHandle):
-    def __init__(self, thread: threading.Thread, stopper: threading.Event, pid_ref: list[int]):
+    def __init__(
+        self,
+        thread: threading.Thread,
+        stopper: threading.Event,
+        pid_ref: list[int],
+        os_pid_ref: dict,
+    ):
         self._thread = thread
         self._stop = stopper
         self._pid_ref = pid_ref
+        self._os_pid_ref = os_pid_ref
 
     @property
     def pid(self) -> int:
-        return self._pid_ref[0] if self._pid_ref else -1
+        if self._pid_ref and self._pid_ref[0] > 0:
+            return self._pid_ref[0]
+        return self._os_pid_ref.get("pid") or -1
 
     def is_alive(self) -> bool:
         return self._thread.is_alive()
 
     def stop(self) -> None:
         self._stop.set()
-        self._thread.join(timeout=15)
+        self._thread.join(timeout=20)
+        if self._thread.is_alive():
+            # Runner stuck (e.g. wedged Playwright call) — kill the browser so
+            # the user is never left with an unmanageable orphan window.
+            _kill_pid_tree(self.pid)
+            self._thread.join(timeout=5)
+
+
+# Per-attempt gate on Camoufox.__enter__ (browser process + juggler handshake).
+# Empirically: fresh profiles ~2-5s, aged profiles 6-16s; a flaky juggler race
+# can hang the handshake FOREVER while the Firefox window sits open. 30s cleanly
+# separates "slow" from "wedged"; a wedged attempt is killed and retried once.
+_LAUNCH_READY_TIMEOUT_S = 30.0
 
 
 class CamoufoxLauncher(Launcher):
@@ -205,11 +252,6 @@ class CamoufoxLauncher(Launcher):
         fingerprint: dict[str, Any],
         proxy: dict[str, Any] | None,
     ) -> LaunchHandle:
-        stopper = threading.Event()
-        pid_ref: list[int] = []
-        ready = threading.Event()
-        err_ref: list[BaseException] = []
-
         # CRITICAL (user 2026-05-27): drop `window.outerWidth/Height/screenX/Y`
         # from the persisted fingerprint before passing it to Camoufox. These
         # are GENERATED at fingerprint-time from a random plausible monitor
@@ -286,11 +328,67 @@ class CamoufoxLauncher(Launcher):
             "browser.urlbar.suggest.openpage": True,
             # Bookmarks toolbar visible on new tabs only — matches modern FF default
             "browser.toolbars.bookmarks.visibility": "newtab",
+            # A hung/killed launch (our watchdog, taskkill, crash) must NEVER
+            # make the next start show the "restore session?" / safe-mode
+            # prompts — those block the juggler handshake invisibly.
+            "browser.sessionstore.resume_from_crash": False,
+            "browser.sessionstore.max_resumed_crashes": 0,
+            "toolkit.startup.max_resumed_crashes": -1,
         }
 
-        # Snapshot existing Mozilla windows BEFORE launch so we can identify
-        # the new one when Playwright doesn't surface a PID.
+        last_error: LaunchError | None = None
+        for _attempt in (1, 2):
+            outcome = self._launch_once(
+                profile_id=profile_id,
+                user_data_dir=user_data_dir,
+                cf_config=cf_config,
+                proxy=proxy,
+                win_w=win_w,
+                win_h=win_h,
+                locale=locale,
+                firefox_user_prefs=firefox_user_prefs,
+                homepage=homepage,
+            )
+            if isinstance(outcome, CamoufoxHandle):
+                return outcome
+            last_error = outcome
+            # Retry ONLY the flaky juggler hang; exceptions are deterministic
+            # (bad proxy, bad config) and would just fail again.
+            if not getattr(outcome, "is_hang", False):
+                break
+        assert last_error is not None
+        raise last_error
+
+    def _launch_once(
+        self,
+        *,
+        profile_id: str,
+        user_data_dir: str,
+        cf_config: dict[str, Any],
+        proxy: dict[str, Any] | None,
+        win_w: int,
+        win_h: int,
+        locale: str,
+        firefox_user_prefs: dict[str, Any],
+        homepage: str,
+    ) -> CamoufoxHandle | LaunchError:
+        stopper = threading.Event()
+        ready = threading.Event()
+        pid_ref: list[int] = []
+        err_ref: list[BaseException] = []
+
+        # Snapshot existing Mozilla windows BEFORE launch: the watcher picks the
+        # first NEW one (works even when Playwright doesn't surface a PID).
         before_hwnds: set[int] = {h for h, _ in _list_top_mozilla_windows()}
+        watch_state: dict = {"hwnd": None, "pid": None}
+        watch_stop = threading.Event()
+        watcher = threading.Thread(
+            target=_window_watcher,
+            args=(before_hwnds, watch_state, watch_stop),
+            name=f"camoufox-watch-{profile_id}",
+            daemon=True,
+        )
+        watcher.start()
 
         def runner() -> None:
             try:
@@ -319,26 +417,19 @@ class CamoufoxLauncher(Launcher):
                 ) as browser:
                     fx_pid = _extract_pid(browser)
                     pid_ref.append(fx_pid)
-                    # Maximize the OS-level Firefox window FIRST — before the
-                    # homepage navigation, which can block for up to 15s on a
-                    # slow network. The initial window exists as soon as the
-                    # persistent context is up, so the user must never watch a
-                    # mis-sized window while Google loads.
-                    # Don't fail launch if maximize times out — fall through.
-                    try:
-                        _maximize_camoufox_window(fx_pid, before_hwnds)
-                    except Exception:
-                        pass
+                    # Launch is "ready" once the browser is up — the window is
+                    # already maximized by the watcher. Homepage navigation runs
+                    # AFTER so a slow network never delays the launch API.
+                    ready.set()
                     # Land on a locale-correct Google: reuse the initial tab if
                     # Camoufox already opened one (persistent context), otherwise
                     # create a new tab. Avoids duplicate Google tabs on relaunch.
                     try:
                         pages = list(getattr(browser, "pages", []) or [])
                         page = pages[0] if pages else browser.new_page()
-                        page.goto(homepage, timeout=15000)
+                        page.goto(homepage, timeout=10000)
                     except Exception:
                         pass
-                    ready.set()
                     while not stopper.is_set():
                         if not _browser_alive(browser):
                             break
@@ -349,13 +440,26 @@ class CamoufoxLauncher(Launcher):
 
         t = threading.Thread(target=runner, name=f"camoufox-{profile_id}", daemon=True)
         t.start()
-        if not ready.wait(timeout=60):
+
+        if not ready.wait(timeout=_LAUNCH_READY_TIMEOUT_S):
+            # Wedged juggler handshake: the Firefox window may be open but
+            # Playwright never connected. Kill the browser (unblocks the stuck
+            # thread too) — the caller retries once.
+            watch_stop.set()
+            stopper.set()
+            _kill_pid_tree(watch_state.get("pid") or -1)
+            t.join(timeout=10)
+            err = LaunchError(
+                f"Camoufox did not become ready within {_LAUNCH_READY_TIMEOUT_S:.0f}s"
+            )
+            err.is_hang = True  # type: ignore[attr-defined]
+            return err
+        if err_ref:
+            watch_stop.set()
             stopper.set()
             t.join(timeout=5)
-            raise LaunchError("Camoufox failed to start within 60s")
-        if err_ref:
-            raise LaunchError(f"Camoufox launch failed: {err_ref[0]!r}") from err_ref[0]
-        return CamoufoxHandle(t, stopper, pid_ref)
+            return LaunchError(f"Camoufox launch failed: {err_ref[0]!r}")
+        return CamoufoxHandle(t, stopper, pid_ref, watch_state)
 
 
 def _extract_pid(browser: Any) -> int:

@@ -1,7 +1,9 @@
-"""CamoufoxLauncher.launch config-building: window.* hygiene, screen re-spoof,
-and maximize-before-goto ordering — with a fake Camoufox (no real browser)."""
+"""CamoufoxLauncher.launch: config hygiene (window.* strip, screen re-spoof),
+watcher-driven maximize, ready-before-goto, and the hang-kill-retry watchdog —
+with a fake Camoufox (no real browser)."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
@@ -51,8 +53,8 @@ def launch_capture(monkeypatch, tmp_path):
     monkeypatch.setattr(cl, "Camoufox", Camo)
     monkeypatch.setattr(
         cl,
-        "_maximize_camoufox_window",
-        lambda *a, **k: log.append("maximize") or True,
+        "_window_watcher",
+        lambda *a, **k: log.append("watch"),
     )
     monkeypatch.setattr(cl, "_primary_screen_metrics", lambda: (1536, 864, 1536, 816))
 
@@ -114,10 +116,84 @@ def test_screen_respoofed_to_real_monitor_and_window_param(launch_capture):
     assert cfg["window.screenY"] + kwargs["window"][1] <= cfg["screen.availHeight"]
 
 
-def test_maximize_happens_before_homepage_goto(launch_capture):
+def test_watcher_started_and_homepage_goto_runs(launch_capture):
     _, log = launch_capture({"_geo": {"locale": "de-DE"}})
-    assert "maximize" in log, "maximize must run"
+    # The maximize watcher must run independently of Playwright readiness.
+    assert "watch" in log
     goto_events = [e for e in log if e.startswith("goto:")]
     assert goto_events, "homepage navigation must run"
-    assert log.index("maximize") < log.index(goto_events[0])
     assert "hl=de" in goto_events[0] and "gl=de" in goto_events[0]
+
+
+def test_crash_prompt_prefs_always_set(launch_capture):
+    kwargs, _ = launch_capture({"_geo": {"locale": "en-US"}})
+    prefs = kwargs["firefox_user_prefs"]
+    # Watchdog kills / taskkill must never trigger restore-session or safe-mode
+    # prompts on the next launch — they'd invisibly block the juggler handshake.
+    assert prefs["browser.sessionstore.resume_from_crash"] is False
+    assert prefs["browser.sessionstore.max_resumed_crashes"] == 0
+    assert prefs["toolkit.startup.max_resumed_crashes"] == -1
+
+
+def test_hung_enter_is_killed_and_retried_once(monkeypatch, tmp_path):
+    log: list[str] = []
+    instances: list[str] = []
+
+    class HangThenOkCamoufox:
+        def __init__(self, **kwargs: Any):
+            self.n = len(instances)
+            instances.append("i")
+
+        def __enter__(self) -> _FakeBrowser:
+            if self.n == 0:
+                time.sleep(1.5)  # longer than the patched ready timeout
+            return _FakeBrowser(log)
+
+        def __exit__(self, *exc: Any) -> None:
+            return None
+
+    monkeypatch.setattr(cl, "Camoufox", HangThenOkCamoufox)
+    monkeypatch.setattr(cl, "_window_watcher", lambda *a, **k: None)
+    monkeypatch.setattr(cl, "_primary_screen_metrics", lambda: (1536, 864, 1536, 816))
+    monkeypatch.setattr(cl, "_LAUNCH_READY_TIMEOUT_S", 0.3)
+    kills: list[int] = []
+    monkeypatch.setattr(cl, "_kill_pid_tree", lambda pid: kills.append(pid))
+
+    launcher = cl.CamoufoxLauncher()
+    handle = launcher.launch(
+        profile_id="t1",
+        user_data_dir=str(tmp_path),
+        fingerprint={"_geo": {"locale": "en-US"}},
+        proxy=None,
+    )
+    assert len(instances) == 2, "hung first attempt must be retried exactly once"
+    assert kills, "the wedged browser must be killed before retrying"
+    handle.stop()
+
+
+def test_exception_fails_fast_without_retry(monkeypatch, tmp_path):
+    instances: list[str] = []
+
+    class BoomCamoufox:
+        def __init__(self, **kwargs: Any):
+            instances.append("i")
+
+        def __enter__(self) -> _FakeBrowser:
+            raise ValueError("bad proxy")
+
+        def __exit__(self, *exc: Any) -> None:
+            return None
+
+    monkeypatch.setattr(cl, "Camoufox", BoomCamoufox)
+    monkeypatch.setattr(cl, "_window_watcher", lambda *a, **k: None)
+    monkeypatch.setattr(cl, "_primary_screen_metrics", lambda: (1536, 864, 1536, 816))
+
+    launcher = cl.CamoufoxLauncher()
+    with pytest.raises(cl.LaunchError, match="bad proxy"):
+        launcher.launch(
+            profile_id="t1",
+            user_data_dir=str(tmp_path),
+            fingerprint={"_geo": {"locale": "en-US"}},
+            proxy=None,
+        )
+    assert len(instances) == 1, "deterministic failures must not be retried"

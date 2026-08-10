@@ -267,6 +267,9 @@ def main() -> None:
         height=800,
         maximized=True,
         min_size=(900, 600),
+        # Match the app's dark background — otherwise WebView2 shows a white
+        # flash for ~1.5s while the frontend loads.
+        background_color="#0b0d12",
     )
 
     def on_loaded() -> None:
