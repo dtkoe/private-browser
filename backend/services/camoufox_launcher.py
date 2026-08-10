@@ -373,6 +373,14 @@ class CamoufoxLauncher(Launcher):
             "browser.urlbar.suggest.history": True,
             "browser.urlbar.suggest.bookmark": True,
             "browser.urlbar.suggest.openpage": True,
+            # camoufox.cfg ships browser.sessionhistory.max_entries=0 (scraping
+            # optimization) → session history is never recorded and the toolbar
+            # Back/Forward buttons are permanently dead (user 2026-08-10).
+            # 50 = stock Firefox default. Needs enable_cache=True on the
+            # Camoufox() call, which re-enables the memory cache history
+            # navigation relies on. Bonus: history.length pinned at 1 is itself
+            # a detectable anomaly — real users always have history.
+            "browser.sessionhistory.max_entries": 50,
             # Bookmarks toolbar visible on new tabs only — matches modern FF default
             "browser.toolbars.bookmarks.visibility": "newtab",
             # A hung/killed launch (our watchdog, taskkill, crash) must NEVER
@@ -457,6 +465,11 @@ class CamoufoxLauncher(Launcher):
                     # no_viewport=True tells Playwright to match viewport to
                     # the actual OS window so the page fills the screen.
                     no_viewport=True,
+                    # Re-enable memory cache + session history viewers (Camoufox
+                    # defaults them off) so Back/Forward actually navigate.
+                    # Works with browser.sessionhistory.max_entries=50 above —
+                    # user prefs win over Camoufox's CACHE_PREFS merge.
+                    enable_cache=True,
                     # We deliberately persist+replay a flat Camoufox config so the
                     # same profile gets the same UA/screen/etc on every launch.
                     # Camoufox warns about this; we acknowledge.
