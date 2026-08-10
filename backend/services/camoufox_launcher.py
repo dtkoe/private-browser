@@ -237,6 +237,16 @@ class CamoufoxLauncher(Launcher):
         cf_config["screen.availWidth"] = win_w
         cf_config["screen.availHeight"] = win_h
 
+        # Pin the JS-reported window position to the work-area origin. Without
+        # this Camoufox centers the window inside a RANDOM generated screen and
+        # JS reports e.g. screenX=72 while outerWidth == screen.width — an
+        # impossible geometry (72+1536 > 1536) that antibot scripts can flag.
+        # We always place+maximize the real window at the origin, so 0,0 is the
+        # one pair that matches reality. (Config keys win over Camoufox's merge;
+        # the OS window position itself is NOT affected by these — verified.)
+        cf_config["window.screenX"] = 0
+        cf_config["window.screenY"] = 0
+
         # Locale: prefer profile geo, else en-US so the user sees a familiar UI
         geo = fingerprint.get("_geo") or {}
         locale = geo.get("locale") or "en-US"
@@ -309,6 +319,16 @@ class CamoufoxLauncher(Launcher):
                 ) as browser:
                     fx_pid = _extract_pid(browser)
                     pid_ref.append(fx_pid)
+                    # Maximize the OS-level Firefox window FIRST — before the
+                    # homepage navigation, which can block for up to 15s on a
+                    # slow network. The initial window exists as soon as the
+                    # persistent context is up, so the user must never watch a
+                    # mis-sized window while Google loads.
+                    # Don't fail launch if maximize times out — fall through.
+                    try:
+                        _maximize_camoufox_window(fx_pid, before_hwnds)
+                    except Exception:
+                        pass
                     # Land on a locale-correct Google: reuse the initial tab if
                     # Camoufox already opened one (persistent context), otherwise
                     # create a new tab. Avoids duplicate Google tabs on relaunch.
@@ -316,15 +336,6 @@ class CamoufoxLauncher(Launcher):
                         pages = list(getattr(browser, "pages", []) or [])
                         page = pages[0] if pages else browser.new_page()
                         page.goto(homepage, timeout=15000)
-                    except Exception:
-                        pass
-                    # Force-position+maximize the OS-level Firefox window
-                    # SYNCHRONOUSLY before declaring "ready" so the user never
-                    # sees the brief huge-window flash that the spoofed
-                    # `window.outerWidth/Height` would otherwise produce.
-                    # Don't fail launch if maximize times out — fall through.
-                    try:
-                        _maximize_camoufox_window(fx_pid, before_hwnds)
                     except Exception:
                         pass
                     ready.set()

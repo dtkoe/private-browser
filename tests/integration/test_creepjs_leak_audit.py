@@ -6,13 +6,11 @@ in the profile.
 """
 from __future__ import annotations
 
-import json
 import os
 
 import pytest
 
 from backend.services.fingerprint_generator import FingerprintGenerator, GeneratorOptions
-
 
 PROBE_JS = r"""
 () => {

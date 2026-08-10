@@ -50,7 +50,7 @@ def main():
         locale=locale,
         firefox_user_prefs={"intl.accept_languages": f"{locale},en"},
         i_know_what_im_doing=True,
-    ) as br:
+    ):
         print("[diag] Camoufox up, polling for new window...", flush=True)
         deadline = time.monotonic() + 10
         hwnd = None
