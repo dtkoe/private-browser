@@ -1,13 +1,16 @@
 """Real launcher: spawns Camoufox in a background thread using its sync API."""
 from __future__ import annotations
 
+import shutil
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from camoufox.sync_api import Camoufox
 
+from backend.services.camoufox_search import ensure_google_search
 from backend.services.launch_manager import Launcher, LaunchError, LaunchHandle
 
 # Locale -> (Google `hl` UI language, `gl` country code). Google picks its UI
@@ -27,6 +30,35 @@ _WINDOW_OVERRIDE_KEYS = frozenset(
         "window.screenY",
     }
 )
+
+
+# Prefs that MUST be live from the first millisecond of browser startup.
+# Playwright's juggler applies firefox_user_prefs only after its channel
+# connects — seconds into startup. That is too late for search: the
+# SearchEngines enterprise policy triggers Services.search.init() at startup,
+# a failed init is cached for the whole session, and the search-config dump
+# only loads while services.settings.server equals the production URL
+# (Utils.LOAD_DUMPS). user.js is read at profile load, before any of that.
+_EARLY_PREFS: tuple[tuple[str, str], ...] = (
+    ("services.settings.server", '"https://firefox.settings.services.mozilla.com/v1"'),
+    ("services.settings.poll_interval", str(2**31 - 1)),
+    ("keyword.enabled", "true"),
+    ("browser.search.suggest.enabled", "true"),
+    ("browser.urlbar.suggest.searches", "true"),
+)
+
+
+def _write_early_prefs(user_data_dir: str) -> None:
+    lines = [f'user_pref("{k}", {v});' for k, v in _EARLY_PREFS]
+    path = Path(user_data_dir) / "user.js"
+    content = "\n".join(lines) + "\n"
+    try:
+        if path.is_file() and path.read_text(encoding="utf-8") == content:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    except OSError:
+        pass
 
 
 GOOGLE_HL_GL: dict[str, tuple[str, str]] = {
@@ -252,6 +284,16 @@ class CamoufoxLauncher(Launcher):
         fingerprint: dict[str, Any],
         proxy: dict[str, Any] | None,
     ) -> LaunchHandle:
+        # Repair Camoufox's sabotaged search stack (see camoufox_search.py) so
+        # urlbar queries actually search Google. Idempotent; self-heals after a
+        # `camoufox fetch` re-install restores the broken files.
+        ensure_google_search()
+        # Patched omni.ja modules stay invisible while the profile's
+        # startupCache holds the old compiled copy (the cache only keys on
+        # buildID, not file contents) — purge it every launch.
+        shutil.rmtree(Path(user_data_dir) / "startupCache", ignore_errors=True)
+        _write_early_prefs(user_data_dir)
+
         # CRITICAL (user 2026-05-27): drop `window.outerWidth/Height/screenX/Y`
         # from the persisted fingerprint before passing it to Camoufox. These
         # are GENERATED at fingerprint-time from a random plausible monitor
@@ -307,10 +349,15 @@ class CamoufoxLauncher(Launcher):
         # Firefox prefs that make the browser behave like a normal user of `locale`,
         # with Google as the search engine and homepage.
         firefox_user_prefs = {
-            "browser.search.defaultenginename": "Google",
-            "browser.search.defaultenginename.US": "Google",
-            "browser.urlbar.placeholderName": "Google",
-            "browser.urlbar.placeholderName.private": "Google",
+            # Search repair layer 3 (see camoufox_search.py + _EARLY_PREFS):
+            # the same prefs are written to the profile's user.js because
+            # juggler applies these too late for SearchService init; kept here
+            # too as redundancy (e.g. user.js manually deleted).
+            "services.settings.server": "https://firefox.settings.services.mozilla.com/v1",
+            "services.settings.poll_interval": 2**31 - 1,
+            "keyword.enabled": True,
+            "browser.search.suggest.enabled": True,
+            "browser.urlbar.suggest.searches": True,
             "browser.startup.homepage": homepage,
             "browser.startup.page": 1,  # open homepage on launch
             "browser.newtabpage.enabled": True,

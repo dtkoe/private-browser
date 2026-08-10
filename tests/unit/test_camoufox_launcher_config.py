@@ -57,6 +57,7 @@ def launch_capture(monkeypatch, tmp_path):
         lambda *a, **k: log.append("watch"),
     )
     monkeypatch.setattr(cl, "_primary_screen_metrics", lambda: (1536, 864, 1536, 816))
+    monkeypatch.setattr(cl, "ensure_google_search", lambda: None)
 
     def run(fingerprint: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         launcher = cl.CamoufoxLauncher()
@@ -135,6 +136,38 @@ def test_crash_prompt_prefs_always_set(launch_capture):
     assert prefs["toolkit.startup.max_resumed_crashes"] == -1
 
 
+def test_search_prefs_make_urlbar_search_google(launch_capture):
+    kwargs, _ = launch_capture({"_geo": {"locale": "en-US"}})
+    prefs = kwargs["firefox_user_prefs"]
+    # LOAD_DUMPS gate: search-config dumps import only with the production URL.
+    assert (
+        prefs["services.settings.server"]
+        == "https://firefox.settings.services.mozilla.com/v1"
+    )
+    # …but remote settings must never sync in the background.
+    assert prefs["services.settings.poll_interval"] == 2**31 - 1
+    assert prefs["keyword.enabled"] is True
+    assert prefs["browser.search.suggest.enabled"] is True
+    assert prefs["browser.urlbar.suggest.searches"] is True
+    # Dead-since-FF44 prefs must be gone (they masked the broken search).
+    assert "browser.search.defaultenginename" not in prefs
+    assert "browser.search.defaultenginename.US" not in prefs
+
+
+def test_early_user_js_written_before_launch(launch_capture, tmp_path):
+    # Juggler applies firefox_user_prefs seconds into startup — too late for
+    # SearchService init (triggered by the SearchEngines policy). user.js is
+    # read at profile load, so the LOAD_DUMPS gate is open from the start.
+    launch_capture({"_geo": {"locale": "en-US"}})
+    txt = (tmp_path / "user.js").read_text(encoding="utf-8")
+    assert (
+        'user_pref("services.settings.server",'
+        ' "https://firefox.settings.services.mozilla.com/v1");' in txt
+    )
+    assert 'user_pref("keyword.enabled", true);' in txt
+    assert f'user_pref("services.settings.poll_interval", {2**31 - 1});' in txt
+
+
 def test_hung_enter_is_killed_and_retried_once(monkeypatch, tmp_path):
     log: list[str] = []
     instances: list[str] = []
@@ -155,6 +188,7 @@ def test_hung_enter_is_killed_and_retried_once(monkeypatch, tmp_path):
     monkeypatch.setattr(cl, "Camoufox", HangThenOkCamoufox)
     monkeypatch.setattr(cl, "_window_watcher", lambda *a, **k: None)
     monkeypatch.setattr(cl, "_primary_screen_metrics", lambda: (1536, 864, 1536, 816))
+    monkeypatch.setattr(cl, "ensure_google_search", lambda: None)
     monkeypatch.setattr(cl, "_LAUNCH_READY_TIMEOUT_S", 0.3)
     kills: list[int] = []
     monkeypatch.setattr(cl, "_kill_pid_tree", lambda pid: kills.append(pid))
@@ -187,6 +221,7 @@ def test_exception_fails_fast_without_retry(monkeypatch, tmp_path):
     monkeypatch.setattr(cl, "Camoufox", BoomCamoufox)
     monkeypatch.setattr(cl, "_window_watcher", lambda *a, **k: None)
     monkeypatch.setattr(cl, "_primary_screen_metrics", lambda: (1536, 864, 1536, 816))
+    monkeypatch.setattr(cl, "ensure_google_search", lambda: None)
 
     launcher = cl.CamoufoxLauncher()
     with pytest.raises(cl.LaunchError, match="bad proxy"):
